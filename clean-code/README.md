@@ -279,3 +279,151 @@ while (dis.read(buf, 0, readBufferSize) != -1)
 > 프로젝트를 시작할 때 자리, 클래스와 변수, 메서드 이름 규칙 등을 정하고 IDE 코드 형식기를 설정하고 모두 따라야 한다
 
 
+### Chapter 6. 객체와 자료구조
+
+#### p118. 자료 추상화
+> 변수 사이에 함수라는 계층을 넣는다고 구현이 저절로 감춰지지 않는다. 구현을 감추려면 추상화가 필요하다
+> 사용자가 구현을 모른 채 자료의 핵심을 조작할 수 있어야 진정한 의미의 클래스다
+```java
+// 인터페이스를 통한 추상화도 레벨이 다르다
+public interface Vehicle {
+    double getFuelTankCapacityInGallons();
+    double getGallonsOfGasoline();
+}
+// 추상적인 표현으로 표현하는 쪽이 더 낫다
+public interface Vehicle {
+    double getPercentFuelRemaining();
+}
+```
+
+#### p119. 자료/객체 비대칭
+* 객체는 추상화 뒤로 자료를 숨긴 채 자료를 다루는 함수만 공개한다
+* 자료 구조는 자료를 그대로 공개하며 별다른 함수는 제공하지 않는다
+
+```java
+public class Square {
+    public Point topLeft;
+    public double side;
+}
+
+public class Rectangle {
+    public Point topLeft;
+    public double height;
+    public double width;
+}
+
+public class Circle {
+    public Point center;
+    public double radius;
+}
+
+public class Geometry {
+    public final double PI = 3.141592653589793;
+    
+    public double area(Object shape) throws NoSuchShapeException {
+        if (shape instanceof Square) {
+            Square s = (Square) shape;
+            return s.side * s.side;
+        } else if (shape instanceof Rectangle) {
+            Rectangle r = (Rectangle) shape;
+            return r.height * r.width;
+        } else if (shape instanceof Circle) {
+            Circle c = (Circle) shape;
+            return PI * c.radius * c.radius;
+        } else {
+            throw new NoSuchShapeException();
+        }
+    }
+}
+```
+* 아래의 2가지 요구 사항에 대해 유지보수 비용이 큰 쪽은?
+  * 새로운 도형인 Pentagon 클래스가 추가되는 경우? Geometry 클래스의 모든 함수를 수정해야 한다
+  * 새로운 함수인 round 함수가 추가되는 경우? round 함수만 모든 자료 구조에 따라 구현하면 된다
+> 즉, 자료 구조에 관대한 설계의 경우 새로운 기능의 추가에 용이하지만, 새로운 자료 구조 추가에 비용이 크다
+> 자료 구조에 관대한 절차적인 코드 설계는 자료 구조에 의해 비용이 커진다
+
+```java
+public interface Shape {
+    double area;
+}
+
+public class Square implements Shape {
+    private Point topLeft;
+    private double side;
+    
+    public double area() {
+        return side * side;
+    }
+}
+
+public class Rectangle implements Shape {
+    private Point topLeft;
+    private double width;
+    private double height;
+    
+    public double area() {
+        return width * height;
+    }
+}
+
+public class Circle implements Shape {
+    private final double PI = 3.141592653589793;
+    private Point center;
+    private double radius;
+    
+    public double area() {
+        return PI * radius * radius;
+    }
+}
+```
+* 아래의 2가지 요구 사항에 대해 유지보수 비용이 큰 쪽은?
+  * 새로운 도형인 Pentagon 클래스가 추가되는 경우? 새로운 Pentagon 클래스를 구현하기만 하면 된다
+  * 새로운 함수인 round 함수가 추가되는 경우? 모든 클래스에 round 함수를 구현해야 한다
+> 자료 구조에 엄격한 객체 지향적 설계는 새로운 자료 구조를 추가하는 데에 관대하나, 반대로 기능(함수)을 추가하는 비용이 커진다
+
+* `자료 구조`와 `함수`의 추가에 모두 관대한 함수를 설계하기는 어려우며, 결국 비즈니스에 맞는 설계가 필요하다
+  * 향후 새로운 `자료 구조`의 가능성이 높다면, `엄격한 자료 구조`를 가진 객체 지향적인 설계를
+  * 그게 아니라 새로운 `기능` 혹은 `비즈니스 요구사항`이 불확실 하여 변경 및 추가가능성이 높다면 순수한 `자료 구조`를
+> 결국 비즈니스가 명확하여 `Entity` 가 명확한 도메인 세계에서는 객체 지향 설계가 유지보수성이 높다고 판단되나
+> 비즈니스가 불확실하고 해당 도메인의 `Entity` 가 언제든 추가될 수 있다면 너무 엄격한 객체지향 클래스화는 지양하는 것이 좋다
+
+* `No Silver Bullet`
+  * 노련한 객체 지향 설계자는 `Visitor` 혹은 `Dual-Patch`와 같은 기법을 통해 모든 `area` 함수 수정을 회피한다
+  * `Visitor` 패턴은 주로 상속 없이 클래스에 메서드를 효과적으로 추가하기 위해 사용하지만,
+  * 합성 객체의 내부 구조가 `Visitor` 에 열리게 되므로 캡슐화를 위반하는 문제가 생긴다
+  * `객체가 중요하고 자주 추가/변경 된다면 객체지향, 객체는 변함없고 기능과 이벤트가 변화무쌍 하다면 절차지향`
+
+#### p123. 디미터 법칙
+> 잘 알려진 휴리스틱으로, 모듈은 자신이 조작하는 객체의 속사정을 몰라야 한다
+
+```java
+// getOptions(), getScratchDir(), getAbsolutePath() 호출을 하려면 해당 객체에 대한 확신이 있어야 한다
+// 즉, 반환값의 내부구조가 노출되지 않고는 안전하게 사용할 수 없다는 말이 된다
+final String outputDir = context.getOptions().getScratchDir().getAbsolutePath();
+
+// 결국 다음과 같이 코드를 나누는 편이 좋다
+Options options = context.getOptions();
+File scratchDir = options.getScratchDir();
+final String outputDir = scratchDir.getAbsolutePath();
+
+// 단, getScratchDir() 의 반환값이 객체인 경우라면 노출되어서는 안 되지만, 자료 구조라면 디미터의 법칙이 적용되지 않는다
+final String outputDir = contexst.options.scratchDir.absolutePath;
+```
+> 디미터의 법칙을 회피하기 위해서 비공개 변수를 사용하고자 하는 유혹에 빠져서는 안 된다
+
+* 디미터의 법칙을 올바르게 이해하고 사용하는 방법은 왜 이러한 구조 혹은 함수 호출이 필요한 한지의 의도를 파악해야 한다
+  * 왜 `getAbsolutePath` 호출을 하게 되었는지, 임시 파일을 생성하기 위함이라면 해당 기능을 추가할 수도 있다
+  * 즉, 객체에 필요한 기능을 고려하여 추가하는 것이 적절한 파해법이다
+
+#### p126. 자료 전달 객체 (Data Transfer Object)
+> 자료 구조체의 전형적인 형태는 공개변수만 존재하고 함수가 없는 `DTO`가 있으며, 가장 일반적인 형태가 `Bean` 구조다
+> private 변수를 get 메서드를 통해서만 접근할 수 있는 일종의 사이비 캡슐화 클래스이다
+
+#### p127. 활성 레코드 (Active Record)
+> 활성 레코드는 자료 전달 객체의 특수한 형태이며 `save`, `find` 같은 탐색함수도 제공된다. 활성 레코드는 데이터베이스 테이블이나
+> 다른 소스에서 자료를 직접 변환한 결과이며, `활성 레코드`도 하나의 자료 구조로 취급한다. 
+> 비즈니스 규칙을 담으면서 내부 자료를 숨기는 객체는 따로 생성한다 (내부 자료는 활성 레코드의 인스턴스일 수 있다)
+
+* **객체와 자료구조**를 요약하면
+  * `새로운 자료 타입을 추가하는 유연성이 필요하면 객체가 더 적합`
+  * `새로운 동작을 추가하는 유연성이 필요하면 자료 구조와 절차적인 코드가 더 적합`
