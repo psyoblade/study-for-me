@@ -427,3 +427,52 @@ final String outputDir = contexst.options.scratchDir.absolutePath;
 * **객체와 자료구조**를 요약하면
   * `새로운 자료 타입을 추가하는 유연성이 필요하면 객체가 더 적합`
   * `새로운 동작을 추가하는 유연성이 필요하면 자료 구조와 절차적인 코드가 더 적합`
+
+
+### Chapter 7. 오류 처리
+
+#### p135 예외에 의미를 제공하라
+* 실패한 코드의 의도를 파악하려면 호출 스택만으로 부족하다
+  * 예외를 던질 때는 전후 상황을 충분히 덧붙인다. 그러면 오류가 발생한 원인과 위치를 찾기가 쉬워진다
+
+#### p135. 호출자를 고려해 예외 클래스를 정의하라
+* 외부 라이브러리 사용 시에 감싸기 기법을 활용하라
+  * 감싸기 기법을 통한 예외처리는 외부 라이브러리와 프로그램 사이의 의존성을 줄여준다
+
+#### p137. 정상 흐름을 정의하라
+* 예외를 통한 기본값 처리는 특수 사례 패턴 (Special Case Pattern)을 검토
+  * 예외를 던지는 `MealExpenses` 객체 대신 기본값 처리를 하는 `PerDiemMealExpenses` 라는 특수 사례 객체를 반환한다
+```java
+// 아래와 같이 예외를 활용한 경우는 코드가 논리를 따라가기 어렵게 만든다
+try {
+    MealExpenses expenses = expenseReportDao.getMeals(employee.getID());
+    m_total += expenses.getTotal();
+} catch (MealExpensesNotFound e) {
+    m_total += getMealPerDiem();
+}
+
+// 기존 클래스를 상속하여 getMeals 함수에서 MealExpensesNotFound 예외는 pass 하고, getTotal 에서 기본값 처리를 한다
+public class PerDiemMealExpenses implements MealExpenses {
+    public int getTotal() {
+    // 기본 값으로 일일 기본 식비를 반환한다.
+    }
+}
+```
+
+#### p138. null을 반환하지 마라
+* null 을 반환하는 코드로 호출자에게 문제를 떠넘기지 말라
+  * `null 대신, 예외나 특수 사례 객체를 반환하라`
+```java
+// 호출자가 null 처리를 하지못하는 순간 많은 문제가 발생할 수 있다
+public void reigsterItem(Item item) {
+  if (item != null) {
+    ItemRegistry registry = peristenStore.getItemRegistry();
+    if (registry != null) {
+      Item existing = registry.getItem(item.getID());
+      if (existing.getBillingPeriod().hasRetailOwner()) {
+        existing.register(item);
+      }
+    }
+  }
+}
+```
