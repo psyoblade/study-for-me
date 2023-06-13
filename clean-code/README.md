@@ -459,7 +459,7 @@ public class PerDiemMealExpenses implements MealExpenses {
 }
 ```
 
-#### p138. null을 반환하지 마라
+#### p138. null 값은 넘기지도 반환하지도 마라
 * null 을 반환하는 코드로 호출자에게 문제를 떠넘기지 말라
   * `null 대신, 예외나 특수 사례 객체를 반환하라`
 ```java
@@ -475,4 +475,62 @@ public void reigsterItem(Item item) {
     }
   }
 }
+
+// 전달받은 함수가 null 처리를 하지 않은 경우 NullPointerException 혹은 아래와 같은 예외를 고려하는 수고를 해야한다
+public class ThrowsExceptionMetricsCalculator {
+    public double xProjection(Point p1, Point p2) {
+        if (p1 == null || p2 == null) {
+            throw new InvalidArgumentException("p1 혹은 p2 는 null 일 수 없습니다");
+        }
+        return (p2.x - p1.x) * 1.5;
+    }
+}
+
+// 단, 아래의 코드는 `java -ea <class-name>` 와 같이 enable assertion 옵션을 추가해야 예외를 잡을 수 있다
+public class AssertionMetricsCalculator {
+    public double xProjection(Point p1, Point p2) {
+        assert p1 != null : "p1 은 null 값일 수 없습니다";
+        assert p2 != null : "p2 은 null 값일 수 없습니다";
+        return (p2.x - p1.x) * 1.5;
+    }
+}
 ```
+
+
+### Chapter 8. 경계
+> 모든 소프트웨어를 직접 바닥부터 개발하는 경우는 드물다. 때로는 상용 패키지를, 때로는 동료가 작성한 코드를 혹은 사내에 배포된 유관 부서의
+> 코드를 사용하는 경우가 더 많다. 이 때에 어떤 식으로는 외부의 코드를 우리 코드에 깔끔하게 통합해야 하며, 이러한 소프트웨어의 경계를 잘 
+> 관리하는 것이 중요하다
+
+#### p144. 외부 코드 사용하기
+* Casting 이 항상 나쁜 것은 아니며, Generics 가 항상 좋은 것도 아니다
+  * `java.util.Map` 과 같은 자바객체를 사용함에 있어서도 필요에 따라 casting 의 불편함을 줄이기 위해 Generics 를 활용하기도 한다
+  * 아래와 같은 Map 객체를 사용하는 코드가 있다고 가정하자
+```java
+Sensor s = (Sensor) sensors.get(sensorId);
+// 위와 같이 Map 객체를 자주 사용한다면 반복되는 Casting 이 불편하여 Generics 적용을 고려할 수 있다
+    
+Map<String, Sensor> sensors = new HashMap<>();
+Sensor s = sensors.get(sensorId);
+// 하지만 이러한 Sensor 라는 구체 클래스가 경게를 넘어서 넘어다닌다면 인터페이스 변경에 비용이 커질 수 있다
+
+public class Sensors {
+    private Map sensors = new HashMap<>();
+    
+    public Sensor getById(String id){
+        return(Sensor)sensors.get(id);
+    }
+}
+```
+> 이와 같이 Map 인터페이스가 변경되더라도 나머지 프로그램에는 영향일 미치지 않는 코드로 개선되었다. 단, 여기서 주의할 점은 
+> Map 클래스를 사용할 때마다 캡슐화가 필요하다는 의미가 아니라, 인터페이스가 프로그램 간에 경계를 넘어서지 말게 하라는 의미이다
+
+#### p149. 학습 테스트 활용하기
+> 외부 API 및 프레임워크를 사용할 때에 학습을 위해 단위 테스트를 활용하는 경우가 많은데 이러한 코드를 계속 유지해야 하는 지 고민한 적이 있다
+> 경우에 따라서 Spike Solution 이라는 이름으로 작성하고 삭제하는 경우도 많았는데, 대상 외부 프로그램의 버전을 업그레이드 할 때에 아주 유용
+> 하게 활용될 수 있다는 것을 깨달았다. 이러한 경계 테스트를 위한 단위 테스트가 없다면 낡은 버전을 필요 이상으로 오래 사용하기 쉽게 된다
+
+* 경계에 위치한 코드는 깔끔하게 분리하고, 기대치를 정의하는 테스트 케이스도 작성한다
+* 통제가 불가능한 외부 패키지의 구현 대신 통제가 가능한 우리 코드(Interface)에 의존하는 게 안전하다
+  * 우리 코드에서 외부 패키지를 세세하게 알 필요는 없다
+
