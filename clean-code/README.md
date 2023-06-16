@@ -534,3 +534,99 @@ public class Sensors {
 * 통제가 불가능한 외부 패키지의 구현 대신 통제가 가능한 우리 코드(Interface)에 의존하는 게 안전하다
   * 우리 코드에서 외부 패키지를 세세하게 알 필요는 없다
 
+### Chapter 9. 단위 테스트
+> 실제 코드가 진화하면 테스트 코드도 변해야 하는데, 테스트 코드가 지저분할수록 변경하기 어려워진다. 또한 테스트 코드가 개발자 사이에서
+> 가장 큰 불만으로 자리잡고 개발 일정에 가장 큰 변수로 비난받기 쉬우며, 결국 테스트 코드를 폐기하기에 이르는 경우도 많다
+> 테스트 코드에 쏟아부은 시간이 문제가 아니라 테스트 코드를 마음대로 짜도 된다고 생각한 것이 문제였고, 테스트 코드는 실제 코드 못지 않게
+> 중요하다. 즉, 테스트 코드를 깨끗하게 유지하지 않으면 결국은 잃어버린다. 그리고 테스트 케이스가 없다면 모든 변경이 잠정적인 버그다
+> `아키텍처가 아무리 유연하고 설계가 잘 되어 있어도 개발자는 변경을 주저하고, 새로운 도전을 하기 두려워할 수 밖에 없다`
+
+#### p155. TDD 법칙 세 가지
+* 실패하는 단위 테스트를 작성할 때까지 실제 코드를 작성하지 않는다
+* 컴파일은 실패하지 않으면서 실행이 실패하는 정도로만 단위 테스트를 작성한다
+* 현재 실패하는 테스트를 통과할 정도로만 실제 코드를 작성한다
+
+> 테스트 커버리지가 높을수록 공포는 줄어들고, 아키텍처가 부실하고 코드나 설계가 모호하더라도 별다른 우려없이 변경할 수 있다
+> 오히려 안심하고 아키텍처와 설계를 개선할 수 있다. 
+
+* 실제 코드를 점검하는 자동화된 단위 테스트 슈트는 설계와 아키텍처를 최대한 깨끗하게 보존하는 열쇠다.
+* 테스트는 유연성, 유지보수성, 재사용성을 제공하며, 테스트 케이스가 있으면 **변경**이 쉬워지기 때문이다
+
+#### p158. 깨끗한 테스트 코드
+> 가독성을 높이려면, 명료성, 단순성, 풍부한 표현력이 필요하다
+
+```java
+class TestPage () {
+  // original
+  public void testGetPageHierachyXml() {
+    crawler.addPage(root, PathParser.parse("PageOne"));
+    crawler.addPage(root, PathParser.parse("PageOne.ChildOne"));
+    crawler.addPage(root, PathParser.parse("PageTwo"));
+    
+    request.setResource("root");
+    request.addInput("type", "pages");
+    Responder responder = new SerializedPageResponder();
+    SimpleResponse response = (SimpleResponse) responder.makeResponse(
+        new FitNessecontext(root), request);
+    String xml = response.getContent();
+    
+    assertEquals("text/xml", response.getContentType());
+    assertSubString("<name>PageOne</name>", xml);
+    assertSubString("<name>PageTwo</name>", xml);
+    assertSubString("<name>ChildOne</name>", xml);
+  }
+  
+  // refactored w/ build-operate-check pattern
+  public void testGetPageHierarchyAsXml() {
+      makePages("PageOne", "PageOne.ChildOne", "PageTwo");
+      
+      submitRequest("root", "type:pages");
+      
+      assertResponseIsXML();
+      assertResponseContains("<name>PageOne</name>", "<name>PageTwo</name>", "<name>ChildOne</name>");
+  }
+}
+```
+> 이와 같은 경우에 build-operate-check 패턴이 적합하며, 잡다하고 세세한 코드는 모두 없앴다는 사실에 주목해야 한다
+> 테스트 코드는 본론에 돌입해 진짜 필요한 자료 유형과 함수만 사용해야 세세한 코드에 주눅들고 헷갈릴 필요없이 이해할 수 있어야 한다
+
+```java
+class EnvironmentControllerTest {
+    
+  @Test
+  public void turnOnLowTempAlarmAtThreshold() throws Exception {
+    hw.setTemp(WAY_TOO_COLD);
+    controller.tic();
+    assertTrue(hw.heaterState());
+    assertTrue(hw.boilerState());
+    assertTrue(hw.coolerState());
+    assertFalse(hw.hiTempAlarm());
+    assertFalse(hw.loTempAlarm());
+  }
+  
+  @Test
+  public void turnOnLoTempAlarmAtThreshold() throws Exception {
+      wayTooCold(0);
+      assertEquals("HBchL", hw.getState());
+  }
+}
+```
+> 실제 환경에서는 절대로 안 되지만 테스트 환경에서는 용인할 만한 방법들도 많다. 즉 테스트하기에 최적화된 코드가 테스트 코드에 맞는 코드다
+
+#### p164. 테스트 당 assert 하나
+> 물론 given-when-then 규칙에 따라 하나의 단위 테스트에 하나의 assert 만 구성하는 것이 좋지만, 경우에 따라서는 중복이 많아질 수 있겠다
+> 이러한 경우 Template Pattern 등을 활용하여 개선할 수 있겠다
+
+* `테스트 함수마다 한 개념만 테스트하라` 가 적합한 접근일 수 있겠다
+
+#### p167. F.I.R.S.T
+
+* 빠르게 (Fast) : 테스트가 느리면 자주 돌릴 엄두를 못 내며, 자주 돌리지 못하면 초반에 문제를 빠르게 찾거나 수정하기 어렵게 된다
+* 독립적으로 (Independent) : 각 테스트 들은 서로 의존해서 안되며, 독립적으로 순서와 병렬 수행과 무관하게 동작해야만 한다
+* 반복가능하게 (Repeatable) : 실제 환경, QA 환경, 버스를 타고 집에가는 길에 사용하는 노트북에서도 실행될 수 있어야만 한다 (외부 의존 제거)
+* 자가검증하는 (Self-Validating) : 테스트는 부울(bool) 값으로 결과를 내어야지, 파일을 읽거나 파일을 서로 비교하는 등의 작업은 위험하다
+* 적시에 (Timely) : 실제 코드를 구현하기 직전에 구현해야지, 구현 후에 단위테스트는 불가능할 수도 있고, 테스트하기 어려워지기 쉽다
+
+> 테스트 코든느 실제 코드만큼이나 프로젝트 건강에 중요하다. 어쩌면 실제 코드보다 더 중요할지도 모르겠다. 테스트 코드는 실제 코드의 유연성, 
+> 유지보수성, 재사용성을 보존하고 강화하기 때문이다. 그러므로 테스트 코드는 지속적으로 깨끗하게 관리하고, 표현력을 높이고 간결하게 정리하자
+
