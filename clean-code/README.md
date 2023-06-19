@@ -534,6 +534,7 @@ public class Sensors {
 * 통제가 불가능한 외부 패키지의 구현 대신 통제가 가능한 우리 코드(Interface)에 의존하는 게 안전하다
   * 우리 코드에서 외부 패키지를 세세하게 알 필요는 없다
 
+
 ### Chapter 9. 단위 테스트
 > 실제 코드가 진화하면 테스트 코드도 변해야 하는데, 테스트 코드가 지저분할수록 변경하기 어려워진다. 또한 테스트 코드가 개발자 사이에서
 > 가장 큰 불만으로 자리잡고 개발 일정에 가장 큰 변수로 비난받기 쉬우며, 결국 테스트 코드를 폐기하기에 이르는 경우도 많다
@@ -629,4 +630,84 @@ class EnvironmentControllerTest {
 
 > 테스트 코든느 실제 코드만큼이나 프로젝트 건강에 중요하다. 어쩌면 실제 코드보다 더 중요할지도 모르겠다. 테스트 코드는 실제 코드의 유연성, 
 > 유지보수성, 재사용성을 보존하고 강화하기 때문이다. 그러므로 테스트 코드는 지속적으로 깨끗하게 관리하고, 표현력을 높이고 간결하게 정리하자
+
+
+### Chapter 10. 클래스
+> 클래스의 구성도 추상화 단계가 순차적으로 나오는데 `public static` -> `private static` -> `private` 변수에 이어 함수가 나온다
+> 즉, 하나의 프로그램은 마치 신문 기사처럼 읽힌다
+
+#### p172. 클래스는 작아야 한다
+* ***단일 책임 원칙 (SRP, Single Responsibility Principle)***
+  * 모듈을 변경할 이유가 하나만 있어야 한다
+  * 메서드 수가 충분히 작아야 한다
+```java
+// 메서드의 수가 충분히 작아도(예: 5개 이하) 책임이 많아서는 안 된다
+public class SuperDashboard extends JFrame implements MetaDataUser {
+    public Component getLastFocusedComponent();
+    public void setLastFocused(Component lastFocused);
+    public int getMajorVersionNumber();
+    public int getMinorVersionNumber();
+    public int getBuildNumber();
+}
+```
+> 변경할 이유를 파악하다 보면 코드를 추상화하기도 쉬워진다. 
+```java
+// 버전과 관련한 메서드를 따로 빼서 Version 클래스로 추상화
+public class Version {
+  public int getMajorVersionNumber();
+  public int getMinorVersionNumber();
+  public int getBuildNumber();
+}
+```
+
+#### p177. 응집도 (Cohesion)
+> 모든 인스턴스 변수를 메서드마다 사용하는 클래스는 응집도가 가장 높다고 말할 수 있으며, 항상 바람직한 것은 아니다
+> `함수를 작게, 매개변수 목록을 짧게` 라는 전략을 취한다면 몇몇 메서드만이 사용하는 인스턴스 변수가 늘어나기 마련이다
+> 이러한 현상은 `새로운 클래스로 쪼개야 한다는` 신호로 받아들일 수 있다
+
+* 응집도를 유지하면 작은 클래스 여럿이 나온다
+  * 큰 함수를 작은 함수 여럿으로 나누면, 해당 함수들만 사용하는 변수가 나오게 되고 이를 다시 별도의 클래스로 추상화할 수 있다
+
+* Knuth's `PrintPrimes` 리팩터링 방향
+  * 리팩터링한 프로그램은 좀 더 길고 서술적인 변수 이름을 사용한다
+  * 리팩터링한 프로그램은 코드에 주석을 추가하는 수단으로 함수 선언과 클래스 선언을 활용한다
+  * 가독성을 높이고자 공백을 추가하고 형식을 맞춘다
+
+#### p185. 변경하기 쉬운 클래스
+* 클래스의 일부에서만 사용하는 비공개 메서드는 코드를 개선할 잠재적인 여지를 시사한다
+  * **실제로 개선에 뛰어드는 계기는 시스템이 변해서라야 한다**
+  * 가까운 장래에 추가 기능이 필요하지 않다면 그대로 내버려두는 편이 좋다
+  * 하지만 **클래스에 손대는 순간 설계를 개선하려는 고민과 시도가 반드시 필요**하다
+
+* ***개방 폐쇄 원칙 (OCP, Open Close Principle)***
+  * 클래스는 확장에 개방적이고 수정에 폐쇄적이어야 한다
+  * 새 기능을 수정하거나 기존 기능을 변경할 때에 건드릴 코드가 최소인 시스템 구조가 바람직하다
+  * **이상적인 시스템은 새 기능을 추가할 때 시스템을 확장할 뿐 기존 코드를 변경하지 않아야 한다**
+
+#### p189. 변경으로부터 격리
+* ***의존 역전 원칙 (DIP, Dependency Inversion Principle)***
+  * 클래스가 상세한 구현이 아니라 추상화에 의존해야 한다는 원칙
+  * 상세한 구현에 의존한느 코드는 테스트가 어렵다
+  * 시스템의 결합도를 낮추면 유연성과 재사용성도 높아진다
+
+```java
+// 외부 API 호출에 의한 Exchange 조회값을 명시적인 값으로 테스트 하기 위한 인터페이스 활용 예제
+public class PortfolioTest {
+    private FixedStockExchangeStub exchange;
+    private Portfolio portfolio;
+    
+    @Before
+    protected void setUp() throws Exception {
+        exchange = new FixedStockExchangeStub();
+        exchange.fix("MSFT", 100);
+        portfolio = new Portfolio(exchange);
+    }
+    
+    @Test
+    public void GivenFiveMSFTTotalShouldBe500() throws Exception {
+        portfolio.add(5, "MSFT");
+        Assert.assertEquals(500, portfolio.value());
+    }
+}
+```
 
