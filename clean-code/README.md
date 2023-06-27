@@ -711,3 +711,28 @@ public class PortfolioTest {
 }
 ```
 
+### Chapter 11. 시스템
+> 하나의 도시는 아주 복잡한 구체화된 시스템의 집합으로 이루어지는데 이러한 도시가 아주 잘 운영되려면, 실제 사용(Use)하는 관점(Concern)에서
+> 설계되어 있어야만 이해하기 쉽고, 깨끗하게 유지할 수 있을 것이다. 
+> 결국 시스템의 생성(Construction, 구현)과 사용(Use, 인터페이스 설계)의 분리를 통해 의존성(Coupling)을 회피할 수 있을 것이다
+
+#### p194. 시스템의 제작(Construction)과 사용(Use)의 분리
+
+* Main 분리 -> 시스템 생성과 사용을 분리
+  * main 함수: 시스템에 필요한 객체를 안전하고 정상적으로 생성하는 데에만 관심이 있고, 사용하는 방법에 대해서는 모른다 단순히 전달할 뿐이다
+  * app 구현: 그저 객체를 사용할 뿐이며, 어떻게 생성되는 지는 모르며 잘 생성되었다고 가정하고 사용하기만 한다
+* 팩토리 -> 객체가 생성되는 시점과 사용되는 시점을 분리
+  * main 함수: Factory 인스턴스만 관장하고 어떻게 동작하는 지는 모른다 (main::LineItemFactoryImpl)
+  * app 구현: 어떻게 생성되는지 모르지만, 언제 생성되는지를 관장한다 (OrderProcessing::<LineItemFactory>.makeLineItem)
+* 의존성 주입(DI, Dependency Injection)
+  * 제어의 역전(IoC, Inversion of Control) 기법을 의존성 관리에 적용한 매커니즘
+
+
+
+> 단순해야 하고, 그러한 단순함을 유지하기 위한 하나의 접근으로 제어의 역전(IoC, Inversion of Control)을 들 수가 있다
+> 다양한 추상화 기법을 도입할 수 있다. 예를 들면 Java Generics 통한 Proxy
+> 혹은, Spring AOP, AspectJ 에 이르기까지 다양한 기법을 통해 관심사를 분리하는
+
+
+
+
