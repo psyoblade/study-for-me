@@ -747,4 +747,74 @@ public class PortfolioTest {
 > 이러한 변화의 맥락에서 관점을 구분할 수 있어야 하고, 이러한 변화를 TDD 라는 도구를 통해 반영할 수 있어야만 한다
 
 
+### Chapter 12. 창발성
+> 창발적이고 깔끔한 코드는 `Kent Back`이 제시한 아래의 4가지 원칙을 준수함으로써 얻어질 수 있다
+
+* 모든 테스트를 실행한다
+* 중복을 없앤다
+* 프로그래머의 의도를 표현한다
+* 클래스와 메서드 수를 최소화 한다
+
+#### p216. 모든 테스트를 실행하라
+> 모든 프로그램의 기초는 의도한 대로 돌아가야 한다. 그리고 의도한대로 돌아가는 것을 확인하는 가장 좋은 방법은 테스트 코드를 작성하는 일이다
+> 테스트가 가능한 시스템을 만들고, 가능한 많은 테스트를 통과하는 프로그램은 자연스럽게 SRP, DIP 를 준수하는 프로그램이 되기 쉽다
+
+* 결합도가 높으면 테스트 케이스를 작성하기 어렵다 featured by SRP, DIP
+> `테스트 케이스를 만들고 계속 돌려라`
+
+#### p217. 중복을 없애라
+> 중복은 추가 작업, 추가 위험, 불필요한 복잡도를 의미한다 
+
+* `Template Method Pattern`
+  * 공통적인 코드를 새로운 메서드로 뽑고 이를 추상 클래스를 통해서 수행하는 패턴
+
+```java
+abstract public class VacationPolicy {
+    public void accrueVacation() {
+        calculateBaseVacationHours();
+        alterForLegalMinimums();
+        applyToPayroll();
+    }
+    private void calculateBaseVacationHours() { /*...*/ }
+    abstract protected void alterForLegalMinimums();
+    private void applyToPayroll() { /*...*/ }
+}
+
+public class USVacationPolicy extends VacationPolicy {
+    @Override
+    protected void alterForLegalMinimums() {
+      // 미국 최소 법정 일수 계산
+    }
+}
+public class EUVacationPolicy extends VacationPolicy {
+    @Override
+    protected void alterForLegalMinimums() {
+      // 유럽 연합 최소 법정 일수 계산
+    }
+}
+```
+
+#### p221. 표현하라
+> 유지보수 개발자가 시스템을 최대한 이해해야 하는데, 시스템이 점점 복잡해지면서 코드를 이해하는 데에 더 많은 시간을 보낸다면 가장 큰 문제다
+
+* 좋은 이름을 선택한다
+  * 기능의 의도를 가장 잘표현하는 관련 있는 이름을 작성한다
+* 함수와 클래스 크기를 가능한 줄인다
+  * 작은 함수는 이름을 짓기도, 구현하기도 그리고 이해하기도 쉽다
+* 표준 명칭을 사용한다
+  * 적절한 패턴(Command, Visitor 등) 사용한다면 포함하여 명명한다
+* 단위 테스트 케이스를 꼼꼼히 작성한다
+  * 잘 만든 테스트 케이스를 통해 클래스를 더 빨리 잘 이해할 수 있다
+
+#### p222. 클래스와 메서드 수를 최소화 하라
+> 무의미하고 수치에 입각한 클래스, 메서드 설계 보다는 실용적인 방식을 선택하라.
+> 테스트 케이스를 만들고, 중복을 제거하고 그리고 의도를 표현하는 작업 순으로 중요하고 가장 마지막에 수를 최소화 한다
+
+
+>
+
+
+
+
+
 
