@@ -62,4 +62,7 @@
 ### 키워드
 * 경계 컨텍스트 : 
 * 단일 진실 공급원 :
-* 
+
+
+### 레퍼런스
+* [building-event-driven-microservices ch.4](https://www.oreilly.com/library/view/building-event-driven-microservices/9781492057888/ch04.html)
