@@ -2,7 +2,7 @@
 > [데이터 메시](https://www.yes24.com/Product/Goods/123875598) 읽고 정리.
 
 
-## Prologue. 데이터 메시 상상하기
+## Prologue. What is Data Mesh?
 
 ### p29 실생활에서의 데이터 메시
 * 도메인 단위 조직 구성 (p30)
@@ -31,4 +31,40 @@
   * `모놀리식 데이터 웨어하우스와 레이크를 사용`하면서 **아키텍처가 기능적으로 파편화되고 데이터 팀을 중심으로 중앙 집중화** 되었습니다
     * 현재 중앙 집중식 데이터 레이크의 문제점을 말한다. 레이크도 도메인 중심으로 도구로써 활용될 수 있어야 한다
     * 결국 거버넌스에 관련한 도구나 서비스를 도입, 개발 하지 않으면 어려운 것 같다 (Unity Catalog 같은)
-    * 
+
+
+## Epilogue, Data Discovery Platform
+> 조직내 사일로 대신 모든 데이터를 탐색 가능한 상태로 만들고, 도메인 별로 조직화 하고, 데이터 사용성을 높이기 위한 정보 및 방법을 제공
+
+### 레퍼런스 문서
+* [Xguru Data Discovery Platform](https://news.hada.io/topic?id=3247)
+* [Data Discovery Platform](https://velog.io/@hanovator/Data-Discovery-Platform)
+* [뱅크샐러드 Data Discovery Platform의 시작](https://blog.banksalad.com/tech/the-starting-of-datadiscoveryplatform-era-in-banksalad/)
+* [배이글코드 인터뷰](https://bit.ly/3Hxn4RP)
+* [SOCAR 데이터 디스커버리 플랫폼 도입기](https://tech.socarcorp.kr/data/2022/03/16/metdata-platform-02.html)
+
+### 오픈소스 Data Discovery Platform 시스템
+#### [DataHub](https://github.com/datahub-project/datahub)
+* [DataHub System Architecture](https://datahubproject.io/docs/architecture/architecture/)
+  * ![datahub-system-architecture](images/datahub-architecture.png)
+  * ![datahub-system-architecture](images/datahub-architecture-detailed.png)
+* Features
+  * Apache v2 License
+
+#### [Atlas](https://github.com/apache/atlas)
+* [Apache Atlas System Architecture](https://atlas.apache.org/#/Architecture)
+  * ![atlas-system-architecture](images/atlas-architecture.png)
+* Features
+  * Apache v2 License
+
+#### [Amundsen](https://github.com/amundsen-io/amundsen)
+* [Amundsen System Architecture](https://www.amundsen.io/amundsen/architecture/)
+  * ![amundsen-system-architecture](images/amundsen-architecture.png)
+* Features
+  * Apache v2 License + Neo4j GPL v3
+
+#### [MetaCat](https://github.com/Netflix/metacat)
+* [Metacat System Architecture](https://atlan.com/metacat-netflix-open-source-metadata-platform/#a-look-at-metacats-architecture)
+  * ![metacat-system-architecture](images/metacat-architecture.png)
+* Features
+  * Apache v2 License
