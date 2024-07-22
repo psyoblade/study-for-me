@@ -57,3 +57,85 @@
 | 트랜잭션 지원 테이블 | 중복 데이터 유지 불필요, 수정불가 테이블을 가정한 기능 및 유지보수 비용 감소 |
 | 트랜잭션 레벨의 롤백 기능  | 장애 및 이슈 발생 시에 최소한의 수정으로 빠른 대응이 가능            |
 | 카프카와 컨슈머의 디커플링  | 프로듀서 입장의 운영 안전성, 컨슈머 입장의 단순성, 카프카 장애 영향 최소화  |
+
+
+### 3. 스트리밍 델타 레이크 기반의 하이브 테이블이 조회 시에 시간이 갈수록 성능이 떨어지는 이유?
+> 현상은 델타 레이크를 통해 적재되는 실시간 데이터를 하이브 커넥터를 통해 연동하는 경우, 라이브 스트리밍 테이블을 제공할 수 있다고 판단되어
+> 실제로 서비스를 해보면, 시간이 갈수록 조회 성능이 떨어지는 경험을 할 수 있었고, 데이터가 누적되기 때문이라 판단해서 지원하는 최적화 기능인
+> `compaction` 및 `vacuum` 을 주기적으로 수행해도 조회 성능이 나아지지 않는 것을 알게 되었다
+
+#### 3.1 `Spark Streaming` 과 `Delta Lake` 조합으로 적재되는 경로를 `Hive Connector` 를 통해 조회가능한가?
+* [Hive Connector](https://github.com/delta-io/delta/tree/master/connectors/hive) 정보를 참고하여 구성 및 테이블 생성이 가능하다
+```sql
+SET parquet.column.index.access=false;
+
+CREATE EXTERNAL TABLE `default.delta_table_v1`(
+  `user_id` int,
+  `user_name` string,
+  `user_detail` array<struct<key:string,value:int,type:bigint>>,
+  `payment` double,
+  `description` string,
+  `timestamp` string,
+  `corrupt_json` string,
+  `load_time` string,
+  `p_dt` string
+)
+ROW FORMAT SERDE
+  'org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe'
+STORED BY
+  'io.delta.hive.DeltaStorageHandler'
+WITH SERDEPROPERTIES (
+  'hive.input.format'='io.delta.hive.HiveInputFormat',
+  'hive.tez.input.format'='io.delta.hive.HiveInputFormat'
+)
+LOCATION '/path/to/delta-table'
+;
+```
+
+#### 3.2. 초기에는 조회 성능이 좋았지만 시간이 갈수록 `Hive Table` 조회 성능이 떨어지는데 왜 그런가?
+* `/path/to/delta-table/_delta_log` 경로에 수 만개의 log(json)파일이 생성되어 있어 초기 메타정보 로딩 시에 발생하는 병목현상
+* 스파크 세션과 달리 하이브의 경우 매 호출시 마다 해당 메타를 읽어들여야 하기 때문에 성능 병목이 발생할 수 밖에 없는 구조이다
+```sql
+hadoop fs -count /path/to/delta-table/_delta_log
+```
+
+#### 3.3 `optimize` 및 `vacuum` 명령을 통해서 data 파일이 최적화되고 파일 수가 줄어도 성능이 나아지지 않는다? 
+* `optimize` 는 개별 파일의 크기를 최적화하고, 구조화 하기 위한 명령어 이므로 data 크리에만 영향을 미친다
+* `vacuum` 명령어는 더 이상 참조하지 않는, 리텐션 기간이 지난 data 파일을 삭제하므로 log 와는 영향이 없다
+* log 는 내부적인 규칙에 따라 특정 조건이 만족하면 삭제되므로, 명시적으로 체크포인트를 생성하거나, 로그 리텐션 조정외에는 방법이 없다
+
+#### 3.4 스트리밍 과정에서 발생하는 너무 많은 `log` 때문에 느려지는 것은 아닐까?
+* `as log files do not affect performance on read/writes on the table` 에 명시되어 있으나, 스파크 세션이 생성된 이후의 얘기
+* 병목의 원인은 메타데이터 정보를 테이블 생성 시부터 모두 읽어오는 과정에서 발생하는 시간이 문제이기 때문이다
+* 즉, 짧은 시간에 많은 로그가 발생하는 스트리밍 애플리케이션은 반드시 로그 리텐션 수정이 필요하며, 해당 로그를 줄이면서 문제가 해소되었다
+![log-file-retention](images/log-file-retention.png)
+
+#### 3.5 트랜잭션 로그는 자동으로 삭제된다는데 언제 삭제되고, 어떻게 동작하는가?
+* 기본 보존연한은 30일로 설정되어 있으며, 로그 파일은 자동으로 삭제되며, API 등을 통해서 특정 로그를 삭제하는 방법은 제공되지 않습니다
+  * 다만, 체크포인트가 생성되는 시점마다 로그 삭제에 대한 확인을 수행하므로, 해당 시점에 조건이 만족하면 로그가 삭제됩니다
+```text
+Log file retention refers to how long the log files are retained in the Delta table. The default retention is 30 days`
+```
+* [실제 내부 동작에 대한 설명은 길어지니 생략](https://github.com/psyoblade/delta-for-me/blob/main/docs/ref.ch03.tune_file_size.md#6-how-vacuum-works-)하고 동작결과에 대해서만 설명합니다
+  * 모든 로그 파일은 체크포인트 시에 생성되며, 이 로그 파일은 `_delta_log` 경로에 트랜잭션 마다 생성됩니다
+  * 해당 트랜잭션 로그 파일의 수정일자를 기준으로 계산되며, 기본 리텐션이 30일이므로 마지막 수정일자가 31일째 되는 날에 삭제됩니다
+  * 단, GMT 기준이므로 한국시간 오전 9시 경에 발생하는 체크포인트 발생 시에 로그 정리작업이 실행됩니다
+* 로그 정리작업이 실제 동작하기 위한 조건
+  * `spark.databricks.delta.enableExpiredLogCleanup` 가 `true` 이고 (default=true)
+  * `spark.databricks.delta.logRetentionDuration` 일자 이전의 로그가 존재할 때 (default=30days) 해당 로그만 삭제됩니다 
+
+#### 3.6 모든 설정을 다 해주고 다시 실행해도 왜 로그가 삭제되지 않을까요?
+* 스파크 세션 생성 시에 로그 리텐션 설정을 하더라도, 실제 테이블의 메타데이터 정보에는 반영이 되지 않기 때문에, 테이블 메타를 변경해줘야 한다
+* 기본 리텐션 30일로 설정되어 있는 경우에, 아래와 같이 확인 및 변경이 가능하다
+```scala
+// 하둡 및 하이브 설치 및 구성이 정상이라는 가정하에, 하이브 및 하이브 site.xml 파일을 spark 설치 경로에 배포되어 있어야 하고
+// `delta-hive-assembly_2.12-3.1.0.jar` 파일이 하이브 `lib` 경로에 있어서 접근 가능 (hadoop 3.2, hive 3.1, spark 3.5 기준)
+spark.sql("SHOW TBLPROPERTIES delta.`/path/to/delta-table`").show(false)
+spark.sql("ALTER TABLE delta.`/path/to/delta-table` SET TBLPROPERTIES ( 'delta.logRetentionDuration' = '3 days' )")
+spark.sql("DESCRIBE DETAIL delta.`/path/to/delta-table`").show(false)
+```
+* 메타데이터 정보는 `_delta_log` 경로에 `metaData` 라는 키값으로 메타가 변경될 때에만 저장되는 정보이므로, 세션 생성시에 반영되지 않는다
+* 신규 델타 스트리밍 테이블 생성 시에는 ***명시적으로 `delta.logRetentionDuration` 설정을 변경해 주어야만 정상적으로 로그가 삭제***됩니다
+
+
+
