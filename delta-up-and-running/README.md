@@ -241,7 +241,133 @@ AS SELECT * FROM source_table;
 
 
 ### 4-3. 데이터 병합
+> 데이터 병합은 UPSERT 연산으로 동작하므로 INSERT or UPDATE 이므로 내부 동작은 특별한 것은 없다
+
+```sql
+%sql
+MERGE INTO taxidb.YellowTaxis AS target
+  USING YellowTaxiMergeData AS source
+  ON target.RideId = source.RideId
+-- You need to update the VendorId if the records matched
+WHEN MATCHED THEN
+-- If you want to update all columns, you can say "SET *"
+  UPDATE SET target.VendorId = source.VendorId
+WHEN NOT MATCHED THEN
+-- If all columns match, you can also do a "INSERT *"
+  INSERT(RideId, VendorId, PickupTime, DropTime, PickupLocationId,
+    DropLocationId, CabNumber, DriverLicenseNumber, PassengerCount,
+    TripDistance, RateCodeId, PaymentType, TotalAmount, FareAmount,
+    Extra, MtaTax, TipAmount, TollsAmount, ImprovementSurCharge)
+  VALUES(RideId, VendorId, PickupTime, DropTime, PickupLocationId,
+    DropLocationId, CabNumber, DriverLicenseNumber, PassengerCount,
+    TripDistance, RateCodeId, PaymentType, TotalAmount, FareAmount,
+    Extra, MtaTax, TipAmount, TollsAmount, ImprovementSurCharge)    
+```
+
+1. Merge 수행할 테이블에 대해 `YellowTaxis` 라는 테이블 alias 를 걸어두었고
+2. `USING` 구문을 통해서 소스 및 타깃 테이블을 구분하기 위해 명시적인 source, target alias 를 사용합니다
+3. Join 수행을 위해 파티션 키에 해당하는 `VendorId` 를 활용하였고
+4. 가장 처음에 지정한 `ON` 구문에 `RideId` 가 매치되는 source 와 target 레코드에 대해 action 을 수행하며, 변경하고자 하는 컬럼이 하나인 경우 `SET` 구문에 하나만, 다수인 경우 콤마로 구분하여 지정하되 `UPDATE SE *` 을 통해 전체를 업데이트 할 수 있습니다
+5. 매치되는 레코드가 타깃에 없다면 `INSERT` 명령을 수행하게 되고 모든 컬럼이 일치한다면 `INSERT *` 구문을 사용합니다
+
+> 참고로 `ON` 절에 의해 매칭되는 레코드가 다수인 경우에는 다수의 레코드에 대해 `UPDATE` 될 수 있음에 유의해야 합니다
 
 
+#### 원본 테이블에 없는 레코드 다루기 (Modifying unmatched rows using MERGE)
+> 타깃 테이블에는 존재하지만, 소스 테이블에는 존재하지 로우에 대해서 타깃 테이블에 컬럼을 업데이트 하거나 삭제하는데 아주 유용하게 활용될 수 있는 `WHEN NOT MATCHED BY SOURCE` 구문이다 (단, Delta Lake API 는 2.3, SQL 은 2.4 버전부터 지원)
+
+* 소스 테이블과 매칭되는 경우 update, 타깃 테이블에 없는 경우 insert, 소스 테이블에 없는 경우 delete
+```sql
+%sql
+MERGE INTO taxidb.YellowTaxis AS target
+  USING YellowTaxiMergeData AS source
+    ON target.RideId = source.RideId
+WHEN MATCHED
+UPDATE SET *
+  WHEN NOT MATCHED
+INSERT *
+-- DELETE records in the target that are not matched by the source
+WHEN NOT MATCHED BY SOURCE
+DELETE
+```
+* 데이터가 source = { 1, 2, 3 }, target = { 2, 3, 4 } 라고 가정한다면
+  * matched : update (2, 3)
+  * not matched : insert (1)
+  * not matched by source : delete (4)
+
+* delete 가 불편하다면 soft delete 에 해당하는 상태를 변경하는 것도 가능하다
+```sql
+%sql
+MERGE INTO taxidb.YellowTaxis AS target
+  USING YellowTaxiMergeData AS source
+    ON target.RideId = source.RideId
+WHEN MATCHED
+  UPDATE SET *
+WHEN NOT MATCHED
+  INSERT *
+-- Set target.status = 'inactive' when records in the target table don’t exist in the source table and condition is met
+WHEN NOT MATCHED BY SOURCE target.PickupTime >= (current_date() - INTERVAL '5' DAY) THEN
+  UPDATE SET target.status = 'inactive'
+```
+* 안전하게 유지할 수 있지만, 대상 데이터가 너무 많은 경우 갱신되는 레코드가 많을 수 있으므로 최근 5일간 데이터에 대해서만 처리(update or delete)하게 할 수도 있습니다
+* `WHEN NOT MATCHED BY SOURCE` 구문의 경우 여러개의 조건에 해당하는 조치를 수행할 수 있으며, 마지막 구문(else)을 제외한 모든 절은 반드시 조건(else if)이 필요합니다
 
 
+### 4-4. 히스토리 정보를 통한 병합 연산 분석
+> `DESCRIBE HISTORY` 명령을 통해 `MERGE` 연산에 대한 상세 정보를 `operationParameters 라는 섹션에서 확인할 수 있는데
+* operationParameters
+```json
+{
+    predicate -> ((target.RideId = source.RideId) AND (target.VendorId = source.VendorId))
+    , matchedPredicates -> [{"actionType":"update"}]
+    , notMatchedPredicates -> []
+}
+```
+* operationMetrics
+```json
+{
+    numTargetRowsCopied -> 0
+    , numTargetRowsDeleted -> 0
+    , numTargetFilesAdded -> 2
+    , executionTimeMs -> 973
+    , numTargetRowsInserted -> 0
+    , scanTimeMs -> 434
+    , numTargetRowsUpdated -> 2
+    , numOutputRows -> 2
+    , numTargetChangeFilesAdded -> 0
+    , numSourceRows -> 1
+    , numTargetFilesRemoved -> 2
+    , rewriteTimeMs -> 466
+}
+```
+
+* 델타레이크 내부에서 병합 연산이 발생할 때 순서
+1. 우선 소스와 타깃 테이블의 `inner join` 이 수행을 통해, 불필요한 셔플링을 피할 수 있습니다
+2. 동일한 두 테이블에 대해 `outer join` 을 통해, INSERT, DELETE 그리고 UPDATE 를 수행합니다
+
+* 완전히 동일하지 않으나 아래와 같은 방식을 상상해볼 수 있겠다 
+```sql
+# FULL OUTER JOIN을 사용한 SQL 쿼리
+inner_join = spark.sql("""
+    SELECT *
+    FROM a
+     JOIN b
+    ON a.aid = b.bid
+""")
+
+# 결과 출력
+inner_join.show()
+
+# FULL OUTER JOIN을 사용한 SQL 쿼리
+outer_join = spark.sql("""
+    SELECT *
+    FROM a
+    FULL OUTER JOIN b
+    ON a.aid = b.bid
+    WHERE a.aid IS NULL OR b.bid IS NULL
+""")
+
+# 결과 출력
+outer_join.show()
+```
+> 위에서는 동일한 연산이라고 표현했지만 순수하게 연산이 같다는 의미이지 MERGE 동작의 내부 방식은 완전히 다르게 동작합니다
