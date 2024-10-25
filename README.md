@@ -12,7 +12,10 @@
 | 2024/07~08 | [Understanding ETL](understanding-etl)                     | ETL 이해하기                     | [Understanding ETL](https://www.databricks.com/resources/ebook/understanding-etl)                           |
 | 2024/07~08 | [Delta Lake: Up & Running](delta-up-and-running)           | 델타 레이크 Up & Running          | [Delta Lake: Up & Running](https://www.databricks.com/resources/ebook/delta-lake-running-oreilly)           |
 | 2024/08~09 | [Delta Lake: The Definitive Guide](delta-definitive-guide) | 델타 레이크 완벽 가이드                | [Delta Lake: The Definitive Guide](https://learning.oreilly.com/library/view/delta-lake-the/9781098151935/) |
-| 2024/09~10 | Streaming Data Mesh                                        | 스트리밍 데이터 메시                  | [Streaming Data Mesh](https://www.yes24.com/Product/Goods/115873033)                                        |
+| 2024/09~10 | [Vue.js](vue-js)                                           | 뷰                            | [Vue.js](https://ko.vuejs.org/guide/introduction)                                                           |
+| 2024/10~11 | Streaming Data Mesh                                        | 스트리밍 데이터 메시                  | [Streaming Data Mesh](https://www.yes24.com/Product/Goods/115873033)                                        |
+
+
 
 
 ## 참고

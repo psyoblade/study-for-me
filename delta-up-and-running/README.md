@@ -202,19 +202,20 @@ AS SELECT * FROM source_table;
 > 델타 테이블은 SQL DDL/DML, Python DataFrameWriter 혹은 DeltaTableBuilder API 등을 통해서 생성될 수 있으며, 다른 열 혹은 함수를 활용해서 자동 생성되는 `GENERATED` 컬럼을 통해 유연하고, 강력한 스키마 기능을 제공하며, `SQL INSERT 혹은 COPY INTO` 같은 명령어를 통해서 대량의 데이터를 신속하게 추가할 수 있습니다
 
 ### 3-1. 테이블 생성
+* [Creating a Delta Table with SQL DDL](https://github.com/psyoblade/delta-for-dummies/blob/main/notebooks/3-1.%20delta-lake-create-table-with-sql.ipynb)
+* [Creating Delta Tables with the DataFrameWriter API](https://github.com/psyoblade/delta-for-dummies/blob/main/notebooks/3-2.%20delta-lake-create-table-with-api.ipynb)
 
 ### 3-2. 데이터 읽기
+* [Reading a Delta Table](https://github.com/psyoblade/delta-for-dummies/blob/main/notebooks/3-3.%20delta-lake-read-table.ipynb)
 
 ### 3-3. 데이터 쓰기
-
-### 3-4. 메타데이터 관리
-
+* [Writing to a Delta Table](https://github.com/psyoblade/delta-for-dummies/blob/main/notebooks/3-4.%20delta-lake-write-table.ipynb)
 
 
 ## 4. 테이블 삭제, 갱신 및 병합
 
 ### 4-1. 데이터 삭제
-
+* [Deleting Data from a Delta Table](https://github.com/psyoblade/delta-for-dummies/blob/main/notebooks/4-1.%20delta-lake-delete-table.ipynb)
 > 실제 삭제라는 연산은 데이터 파일 수준에서 일어나며, 새로운 파티션 생성으로 인한 데이터 파일이 추가되고, `add` 와 `remove` 액션이 트랜잭션 로그에서 발생함을 알 수 있다
 
 ![fig.4-1-delete-table.png](images/fig.4-1-delete-table.png)
@@ -230,7 +231,7 @@ AS SELECT * FROM source_table;
 
 
 ### 4-2. 데이터 갱신
-
+* [Updating Data in a Table](https://github.com/psyoblade/delta-for-dummies/blob/main/notebooks/4-2.%20delta-lake-update-table.ipynb)
 ![fig.4-2-update-table.png](images/fig.4-2-update-table.png)
 1. 가장 먼저, 갱신 조건에 해당(`predicate`)하는 파일`fedaa0f6623d`을 찾고 `input_file_name()` 함수를 통해 파일 명을 확인할 수 있다
 2. 해당 데이터 파일을 메모리에 올린다음, 해당 레코드를 갱신한 후, 새로운 파일 `50807db851f6`을 생성합니다. 성공적으로 파일이 추가되었다면 `add` 액션을 트랜잭션 로그에 작성합니다
@@ -241,6 +242,7 @@ AS SELECT * FROM source_table;
 
 
 ### 4-3. 데이터 병합
+* [Upsert Data Using the MERGE Operation](https://github.com/psyoblade/delta-for-dummies/blob/main/notebooks/4-3.%20delta-lake-merge-table.ipynb)
 > 데이터 병합은 UPSERT 연산으로 동작하므로 INSERT or UPDATE 이므로 내부 동작은 특별한 것은 없다
 
 ```sql
@@ -316,7 +318,7 @@ WHEN NOT MATCHED BY SOURCE target.PickupTime >= (current_date() - INTERVAL '5' D
 ### 4-4. 히스토리 정보를 통한 병합 연산 분석
 > `DESCRIBE HISTORY` 명령을 통해 `MERGE` 연산에 대한 상세 정보를 `operationParameters 라는 섹션에서 확인할 수 있는데
 * operationParameters
-```json
+```text
 {
     predicate -> ((target.RideId = source.RideId) AND (target.VendorId = source.VendorId))
     , matchedPredicates -> [{"actionType":"update"}]
@@ -324,7 +326,7 @@ WHEN NOT MATCHED BY SOURCE target.PickupTime >= (current_date() - INTERVAL '5' D
 }
 ```
 * operationMetrics
-```json
+```text
 {
     numTargetRowsCopied -> 0
     , numTargetRowsDeleted -> 0
@@ -371,3 +373,159 @@ outer_join = spark.sql("""
 outer_join.show()
 ```
 > 위에서는 동일한 연산이라고 표현했지만 순수하게 연산이 같다는 의미이지 MERGE 동작의 내부 방식은 완전히 다르게 동작합니다
+
+
+
+## 5. 성능 튜닝
+>  일반적인 성능 튜닝이라함은 시스템 성능을 최적화 과정을 말하며, 델타 테이블의 경우 데이터의 저장 및 검색의 최적화를 의미합니다, 역사적으로 데이터 검색의 향상을 위해서는 더 많은 RAM, CPU 혹은 데이터 건너뛰기를 통해 읽는 데이터의 양을 줄이는 접근을 했습니다. 여기서 델타 레이크는 데이터 처리 과정에서 읽어야 하는 파일 및 데이터의 양을 효율적으로 줄여 검색을 가속화하는 방법론을 사용하며, 검색 속도에 악영향을 미치는 또 다른 요소는 `Small File Problem` 이며, 빈번하게 쓰기가 발생하는 경우 압축 등을 통해 해결합니다
+>  정리하면 좋은 성능튜닝 접근방법은 작은 파일문제에 의한 영향을 줄이고, 데이터 건너뛰기를 효과적으로 활성화 하도록 하여 성능을 향상시킬 수 있습니다
+
+### 5-1. 데이터 건너뛰기
+* 통계 메타정보 관리를 통한 데이터 건너뛰기
+  * 최대 32개 필드에 대한 최소/최대값 등의 통계정보를 메타데이터로 저장하고, 이러한 값의 범위를 통해 해당 파일 블록을 건너뜁니다
+  * 별도로 설정하지 않아도 활성화되어 있지만, `OPTIMIZE` 및 `ZORDER BY` 명령을 통해 의도적으로 수정 및 최적화 할 수 있습니다
+* 데이터 건너뛰기를 위한 통계정보
+  * 레코드 수
+  * 처음 32개 열 각각의 최소값
+  * 처음 32개 열 각각의 최대값
+  * 처음 32개 열 각각에 대한 Null 값 수
+* 통계정보 수집에 대한 상세정보
+  * 중첩된 열(`StructType`)의 경우 각 필드 모두 열로 계산
+* `delta.dataSkippingNumIndexedCols` 통해 최대 열의 수를 조정 가능
+  * 너무 많은 열은 오버헤드가 발생하므로 `WHERE` 및 `JOIN`에 활용되는 열에 대한 통계수집을 추천
+  * 너무 긴 문자열의 경우도 건너뛰기 효과보다, 통계 수집에 드는 비용이 더 크기 때문에 비추천
+```sql
+ALTER TABLE
+  table_name
+SET TBLPROPERTIES ('delta.dataSkippingNumIndexedCols' = '<value>');
+```
+* 트랜잭션 로그에 아래와 같이 `stats` 정보가 같이 남게되며 이러한 정보를 통해서 건너뛰기가 가능함
+```shell
+{
+    "add": {
+        "path": "part-00000-a2bcac59-0d4f-40f8-bcdb-57e66bbb00f2-c000.snappy.parquet",
+        "partitionValues": {},
+        "size": 5252,
+        "modificationTime": 1724848669406,
+        "dataChange": true,
+        "stats": "{\"numRecords\":1,\"minValues\":{\"RideId\":9999995,\"VendorId\":1,\"PickupTime\":\"2019-11-01T09:00:00.000+09:00\",\"DropTime\":\"2019-11-01T09:02:23.573+09:00\",\"PickupLocationId\":65,\"DropLocationId\":71,\"CabNumber\":\"TAC304\",\"DriverLicenseNumber\":\"453987\",\"PassengerCount\":5,\"TripDistance\":4.5,\"RatecodeId\":1,\"PaymentType\":1,\"TotalAmount\":20.34,\"FareAmount\":15.0,\"Extra\":0.5,\"MtaTax\":0.4,\"TipAmount\":2.0,\"TollsAmount\":2.0,\"ImprovementSurcharge\":1.1},\"maxValues\":{\"RideId\":9999995,\"VendorId\":1,\"PickupTime\":\"2019-11-01T09:00:00.000+09:00\",\"DropTime\":\"2019-11-01T09:02:23.573+09:00\",\"PickupLocationId\":65,\"DropLocationId\":71,\"CabNumber\":\"TAC304\",\"DriverLicenseNumber\":\"453987\",\"PassengerCount\":5,\"TripDistance\":4.5,\"RatecodeId\":1,\"PaymentType\":1,\"TotalAmount\":20.34,\"FareAmount\":15.0,\"Extra\":0.5,\"MtaTax\":0.4,\"TipAmount\":2.0,\"TollsAmount\":2.0,\"ImprovementSurcharge\":1.1},\"nullCount\":{\"RideId\":0,\"VendorId\":0,\"PickupTime\":0,\"DropTime\":0,\"PickupLocationId\":0,\"DropLocationId\":0,\"CabNumber\":0,\"DriverLicenseNumber\":0,\"PassengerCount\":0,\"TripDistance\":0,\"RatecodeId\":0,\"PaymentType\":0,\"TotalAmount\":0,\"FareAmount\":0,\"Extra\":0,\"MtaTax\":0,\"TipAmount\":0,\"TollsAmount\":0,\"ImprovementSurcharge\":0}}"
+    }
+}
+```
+
+### 5-2. 파티셔닝
+> 스파크에서 사용하는 데이터프레임 관련 파티션 개념이 아니라 하이브의 디렉토리 기준의 '파티셔닝' 구성을 의미하며, 델타 레이크에서는 이러한 파티셔닝을 개선한 리퀴드 클러스터링 기법 또한 추후에 소개합니다. 다만 현재 시점의 리퀴드 클러스터링은 프리뷰 버전이며 기존 파티셔닝 방식과 호환성을 보장하지 않습니다 
+![파티셔닝](images/fig.5-2-partitioning.png)
+
+* 파티션 구성이 읽기 성능을 높일 수 있지만 반면에, 스몰파일 문제를 발생시킬 수도 있다
+* 하이브가 매 요청시 마다 메타스토어를 읽는 것과 다르게, 테이블에 존재하는 모든 파티션 정보를 추적하고 업데이트 하고 있어서 데이터 읽기 및 쓰기 등의 연산에 있어 효과적으로 동작합니다
+  * 변경된 스키마(컬럼의 추가 등)는 저장 시에 `.option("overwriteSchema", "true")` 옵션으로 업데이트가 가능합니다
+* 데이터를 읽을 때에, 파티션 조건이 포함되는 경우 정확하게 일치하는 파티션만 읽어들이며 `.where("PickupMonth == '12' and PaymentType == '3' ")` 이를 델타로 다시 저장 시에도 전체를 읽지 않고 특정 파티션에 대해서만 업데이트 하기위해 `.option("replaceWhere", "PickupMonth = '12'")` 와 같은 표현식을 사용할 수 있습니다
+  * 위의 `replaceWhere` 옵션 지정 시에는 스키마가 `overwrite` 될 수 없습니다
+* 특히 `OPTIMIZE`,`ZORDER BY` 같은 컴팩션 작업과 조합해서 사용하는 경우 최적의 성능을 낼 수 있습니다
+  * `OPTIMIZE taxidb.tripData WHERE PickupMonth = 12 ZORDER BY tpep_pickup_datetime`
+  * 이런 최적화의 경우에는 `.option("dataChange", "false")` 로 설정하여 히스토리에 남기지 않습니다
+
+### 5-3. 파티셔닝 경고 및 고려 사항
+* 높은 카디낼러티를 가진 컬럼은 `Small file problem` 회피를 위해 파티셔닝 대신 `Z-ordering` 을 추천합니다
+* 일반적으로 파티션 당 최소 1GB 이상의 데이터가 예상될 때에 파티셔닝을 검토하면 좋습니다
+* 명시적으로 지정하지 않는 한, 파티셔닝 컬럼은 테이블 스키마의 가장 마지막에 위치합니다
+* 한 번 생성된 파티션은 변경할 수 없으며, 마치 `fixed data layout` 으로 간주됩니다
+* 정해진 `silver bullet`은 없으며 데이터의 `granularity, ingestion and update pattern` 을 고려하여 가이드라인에 따라 파티셔닝을 설계하는 방법이 최신입니다
+
+### 5-4. 컴팩트 파일
+* 델타 테이블에 DML 수행 이후 다수의 작은파일의 발생가능성이 있다면 최소 16MB 이상의 큰 크기의 파일들로 저장하는 최적화 수행이 필요하다
+
+#### Compaction
+* 최적화 작업은 `compaction` 혹은 `bin-packing` 이라고 부르며, 전통적인 최적화 기법 중의 하나인 파티션 구성 및 파티션 수를 조정하는 연산에 해당하며, `dataChange=false` 옵션으로 수행이 필요합니다
+  * 델타 테이블의 기본 컴팩션 옵션은 `dataChange=true` 인데, 대상 테이블이 스트리밍 소스로 사용되는 경우, true 속성의 컴팩션은 테이블에 동시성 연산(`concurrent operations`) 이 중단될 수 있기 때문에 데이터의 변경이 없는 최적화(파티션 수 조정 등)의 경우 false 설정이 필요합니다
+  * 여기서의 Compaction 은 일반적인 데이터 프레임 연산을 통한 최적화를 말하며, 명시적인 `optimize`, `vacuum` 과 같은 api 연산은 기본 설정이 false 입니다
+
+#### OPTIMIZE
+* 트랜잭션 로그에서 사용되지 않는 불필요한 파일들을 제거하고, 일정한 크기로 밸런스를 맞출 수 있도록 파일의 크기를 조정하는 것이 옵티마이즈의 목적입니다
+![optimize](images/fig.5-3.optimize.png)
+  * `OPTIMIZE` 명령은 파일이 어떻게 구성되어 있는지(데이터의 특정)를 고려하지 않으며 파일들을 통합하고 재구성하는 데에만 촛점을 맞추고 있습니다
+  * `OPTIMIZE` 연산은 멱등(idempotence)하므로 여러번 수행하는 경우 두 번째 실행은 영향이 없습니다
+  * 특히 특정 파티션에만 변경이 자주 발생한다면 조건을 주고 해당 파티션에만 최적화를 수행합니다
+* `OPTIMIZE` 검토 사항
+  * 많은 작은 파일들이 존재하는 파티션에 효과적이며
+  * 이미 `coalesce` 된 큰파일 혹은 변경이 거의 없는 파티션에는 효과가 거의 없으며
+  * 리소스가 상당히 많이 소요되는 연산이므로 분산 리소스 사용에 유의해서 스케줄링할 필요가 있다
+
+### 5-5. ZORDER BY
+
+![Optimize-with-ZOrdering](images/fig.5-4-optimize-zorder.png)
+
+### 5-6. Liquid Clustering
+
+
+### 5-7. Q&A
+1. `overwriteSchema` 옵션?
+   - `withColumn` 등으로 스키마가 변경된 경우에도 `overwriteSchema` 옵션으로 변경이 가능
+   - 파티션 추가 이전과 이후 파티션 별 스키마가 달라지는지, 테이블 스키마는 어떤지 확인이 필요함
+2. `dataChange` 옵션?
+   - 일반적으로 업데이트가 필요한 동작 가운데, 데이터가 변경되지 않는 경우(최적화 등)는 false 설정
+   - false 경우에는 히스토리 로그에 저장되지 않지만, 업데이트 발생시에는 작업데이터가 손상될 수 있습니다
+   - 특히 대상 테이블이 스트리밍 소스로 사용되는 경우 의도하지 않은 변경이 데이터 사용자에 영향을 줍니다
+3. `replaceWhere` 옵션?
+4. 명시적으로 정해진 `optimize` 및 `vacuum` 시에 `dataChange` 옵션이 false 가 맞나?
+   - 대상 테이블을 소스로 하는 경우 문제가 된다고 했지, 쓰는 경우에도 문제가 없다고 하지 않았다
+   - 그러면 데이터 쓰는 작업을 델타 테이블에 대해 최적화 명령 수행하는 데에 문제가 없는가?
+
+
+
+
+
+
+## 9. Q&A
+
+### 9-1. 델타를 통해서 파일을 저장하는 경우 굳이 파티셔닝 하지 않아도 될 것 처럼 보이는데, 언제 파티셔닝 하면 좋은가?
+
+### 9-2. 순수하게 델타를 통한 색인, 디렉토리 파티셔닝을 통한 저장 그리고 리퀴드 클러스터링 각각 어떤 경우에 사용하면 좋은가?
+
+### 9-3. [Unity Catalog](https://www.databricks.com/blog/open-sourcing-unity-catalog) 가 권한관리, 거버넌스 등을 한다고 아는데 구체적으로 어떤 컴포넌트로 구성되고 어떻게 동작하는가?
+
+### 9-4. Data Warehouse 와 Data Lake-house 의 차이점?
+
+### 9-5. 스파크의 장점, 한계점 그리고 어떤 경우에 사용하면 가장 효과적인지 말할 수 있는가?
+
+### 9-6. 데이터브릭스 런타임에서 제공하는 최적화 (Photon 포함)와 오픈소스 스파크의 차이점과 장단점?
+
+### 9-7. 데이터브릭스 SQL 이 뭔가?
+
+### 9-8. 델타를 통해 스트리밍 데이터 저장 시에 아카이빙 로그에 따른 하이브 조회 시에 부하가 커지는데?
+> 하이브 통한 조회에 대한 이슈는 해결이 힘들 것 같고, 데이터브릭스 런타임 연동한 테스트를 해보면 좋겠다
+
+
+
+## 10. Future Works
+
+### 10-1. 내가 알고 있는 사실 혹은 아키텍처의 장단점을 어떻게 하면 잘 설명할 수 있고, 강점을 부각시킬 수 있는지 생각하라
+
+### 10-2. 생성형 AI 통한 코드 추천, 코드 수정 가이드 및 오류 원인 요약문 등의 서비스 확장 검토
+
+### 10-3. AWS 의 Zero ETL 에 대한 이해와 향후 방향에 대한 검토
+
+### 10-4. 델타레이크의 기술적인 이해와 1시간, 30분 그리고 5분 만에 설명할 수 있는 정리
+
+### 10-5. 델타레이크, 유니티 카탈로그 및 스파크를 통한 데이터 팀의 향후 로드맵 
+
+### 10-6. 스파크 새로운 실행 엔진 Photon 내부 구조 및 특징 이해
+
+### 10-7. 검색(Search)와 탐색(Discovery)의 차이점의 이해
+
+### 10-8. 다양한 실용 사례 확인 및 적용 해볼 것
+* 대용량 데이터 병합(Merge) 시에 델타 레이크 `Deletion Vector` 활용하면 효과적이라고 함
+* 데이터브릭스 런타임에는 `ZORDER` 개선된 버전이 적용되어 더 좋은 성능을 낸다고 함
+* 델타 레이크 4.0 버전에 적용되는 `Json Variant Type` 지원을 통해 큰 성능향상을 기대할 수 있다고 함
+* 리퀴드 클러스터링 통한 저장 방식에 대한 이해 및 실용 사례 참고
+
+### 10-9. 잦은 변경이 발생하는 델타 테이블의 경우 어떻게 관리되어야 하는가?
+* 매일 잦은 변경이 발생하는 것이 예상되는 경우는 매일 최적화를 하면 된다
+* 가끔 의도하지 않게 타인에 의해 변경되는 경우는 해당 테이블의 메타정보가 모니터링 되어야 하지 않을까?
+
+### 10-10. 텔타 테이블을 어떻게 관리하는 것이 가장 효과적인가?
+* 컴팩션, 옵티마이즈 등의 작업은 쓰기 작업이므로 아무리 Append 되더라도 멀티 Writer 환경은 회피할 수 있어야 하는데, 이를 어떻게 우아하게 운영할 수 있도록 구현하면 좋을까?
+* 주기적으로 조회되는 쿼리를 분석하여 어떤 컬럼을 기준으로 `Z-Ordering` 할 지를 추천하는 방안
+* `Liquid Clustering` 전환과 호환이 안 된다고 하니 ... 확인 후 라이브 적용을 결정하는 것도 검토
+* 
