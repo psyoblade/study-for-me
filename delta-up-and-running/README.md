@@ -453,13 +453,76 @@ SET TBLPROPERTIES ('delta.dataSkippingNumIndexedCols' = '<value>');
   * 리소스가 상당히 많이 소요되는 연산이므로 분산 리소스 사용에 유의해서 스케줄링할 필요가 있다
 
 ### 5-5. ZORDER BY
-
 ![Optimize-with-ZOrdering](images/fig.5-4-optimize-zorder.png)
+* 특정 컬럼의 값을 기준으로 정렬하고 일정 크기 이상의 파일로 저장하여 읽기 성능을 향상시키는 기법
+  * 그림의 4번 항목은 `predicate-pushdown` 기법과 동일하게 파일 스킵이 가능
+* `ZORDER BY` 검토 사항
+  * 파티션 내에서만 동작하기 때문에, 파티셔닝 컬럼에 대해서는 적용할 수 없습니다
+  * 특정 컬럼이 높은 카디낼러티를 가진다면 적용을 검토할 수 있습니다
+  * `OPTIMIZE` 와 다르게 멱등하지는 않지만, 새로운 데이터가 없다면 수행되지 않습니다
+
+> `Z-ordering` 동작은 병렬로 수행되며, 데이터의 분포가 미세하게 다른 경우 병합할 대상 파일을 다르게 선택할 수 있으며, 실행 순서 또한 변경될 수 있기 때문에 작업 시에 멱등성을 보장하지는 않습니다
+![ZOrdering-vs-bucketing](images/z-ordering-vs-bucketing.png)
 
 ### 5-6. Liquid Clustering
+* `Partitioning` - 특정 컬럼의 값을 물리적으로 고정된 데이터 레이아웃을 가지는 방식, 명시적이고 카디낼러티가 충분히 작다면 효과적인 방식
+* `ZORDER BY` - 카티낼러티가 충분히 큰 경우 여러 컬럼에 대해서 파일 및 색인 최적화가 가능하지만, 멱등하게 동작하지 않는다는 점과 대상 커럼 정보를 기억해 두지 않는 경우 파일 레이아웃이 다르게 저장될 수 있다는 점이 단점이고, 데이터가 지속적으로 추가되는 경우에 수작업으로 수행되어야 한다는 단점
+* `Liquid Clustering` - 아직 정식 배포된 기능은 아니지만, `Partitioning` 과 `ZORDER BY` 단점을 해결한 기법입니다
+  * 높은 카디낼러티 컬럼에 대한 필터가 자주 발생하는 테이블
+  * 데이터 분포에 있어 부분적인 편중이 있는 테이블
+  * 튜닝 및 유지보수가 필요한 대용량 테이블
+  * 동시쓰기가 필요한 테이블
+  * 시간의 흐름에 따라 파티션 패턴이 변경되는 테이블
 
+#### Enabling Liquid Clustering 
+> 기존 테이블을 수정(ALTER)하여 생성할 수 없고 초기 생성시에만 지정할 수 있으며 `CLUTSER BY` 구문을 활용하여 생성할 수 있습니다
 
-### 5-7. Q&A
+```sql
+-- Create liquid clustering table
+CREATE EXTERNAL TABLE taxidb.tripDataClustered CLUSTER BY (VendorId)
+LOCATION '/datalake/book/chapter05/YellowTaxisLiquidClusteringDelta'
+AS SELECT * FROM taxiDb.tripData LIMIT 1000;
+
+-- Triggering clustering
+OPTIMIZE taxidb.tripDataClustered;
+
+-- Changing clustered columns
+ALTER TABLE taxidb.tripDataClustered CLUSTER BY (VendorId, RateCodeId);
+
+-- Describing clustered columns
+DESCRIBE TABLE taxidb.tripDataClustered;
+
+-- Removing clustered columns
+ALTER TABLE taxidb.tripDataClustered CLUSTER BY NONE;
+```
+
+#### `Liquid Clustering` Constraints and Supported operations
+* 자동 클러스터링 데이터 지원 연산
+  * `INSERT INTO`
+  * `CREATE TABLE AS SELECT (CTAS) statements`
+  * `COPY INTO`
+  * `Write appends such as spark.write.format("delta").mode("append")` 
+* 다이나믹 데이터 레이아웃 특성
+  * 트리거링 시에 모든 데이터가 아니라 적용이 필요한 부분만 적용된다
+  * 쿼리 패턴이나, 조회 필요성에 따라서 변경이 가능하다
+* 적용 가능한 환경 및 제약조건
+  * Delta Lake 3.2 버전에서 소개 되었고 Spark 3.5.x 이상에서만 동작한다 (2024/10/28 현재)
+  * 델타 테이블 조회시에 `Delta version 7`, `Reader version 3` 이상에서만 읽기가 동작한다
+  * 테이블 생성시에 반드시 리퀴드 클러스터링 활성화가 되어야지 사용할 수 있다
+  * 컬럼의 통계정보를 기반으로 하며, 해동 통계정보는 처음부터 32번째 컬럼까지만 지원한다
+  * 구조화된 스트리밍 워크로드는 `clustering-on-write` 지원은 제공하지 않습니다
+  * 새로운 데이터가 클러스터링 되도록 자주 `OPTIMIZE` 수행이 필요합니다
+
+> 자동으로 클러스터링이 된다고 해서 증분에 대한 최적화가 이루어질 뿐이지 글로벌한 최적화는 보장하지 않기 떄문에 주기적으로 `OPTIMIZE` 해주어야만 최적의 성능을 보장할 수 있습니다
+
+### 5-7. 결론
+> 여러가지 저장, 조회 성능을 향상시키기 위한 기법 요약
+* 파일 기반의 데이터 특성상 명시적으로 조회 I/O 축소를 위한 `Partitioning` 기법
+* 하둡의 'Small file problem' 해결을 위해서 최적화 및 압축을 위한 `OPTIMIZE` 활용
+* 파티셔닝 기법으로 해소하기 어려운 `High Cardinality Column` 문제 해결을 위한 `ZORDER BY` 기법
+* `static data layout` 구조의 한계점을 가지고 있어서 `OPTIMIZE` 와 `ZORDER BY` 조합은 대상 컬럼을 메타데이터에 저장하지 않고 있어 별도로 관리되어야 하는 점과 그리고 명시적으로 `OPTIMIZE` 하지 않으면 적용되지 않는 문제를 해결하기 위해 `dynamic data layout` 지원의 `Liquid Clustering` 기법
+
+### 5-8. Q&A
 1. `overwriteSchema` 옵션?
    - `withColumn` 등으로 스키마가 변경된 경우에도 `overwriteSchema` 옵션으로 변경이 가능
    - 파티션 추가 이전과 이후 파티션 별 스키마가 달라지는지, 테이블 스키마는 어떤지 확인이 필요함
@@ -468,11 +531,37 @@ SET TBLPROPERTIES ('delta.dataSkippingNumIndexedCols' = '<value>');
    - false 경우에는 히스토리 로그에 저장되지 않지만, 업데이트 발생시에는 작업데이터가 손상될 수 있습니다
    - 특히 대상 테이블이 스트리밍 소스로 사용되는 경우 의도하지 않은 변경이 데이터 사용자에 영향을 줍니다
 3. `replaceWhere` 옵션?
+   - 데이터를 읽을 때에는 `where` 절로 필터링하고, 저장 시에는 델타 옵션인 `replaceWhere` 절로 명시
 4. 명시적으로 정해진 `optimize` 및 `vacuum` 시에 `dataChange` 옵션이 false 가 맞나?
-   - 대상 테이블을 소스로 하는 경우 문제가 된다고 했지, 쓰는 경우에도 문제가 없다고 하지 않았다
-   - 그러면 데이터 쓰는 작업을 델타 테이블에 대해 최적화 명령 수행하는 데에 문제가 없는가?
+   - 기본 설정이 false 이며 이 때에 데이터를 읽고 쓰는 데에는 이슈는 없는 게 맞다
+   - 다만, 다수의 쓰기 동작이 있는 경우 다수의 트랜잭션이 발생할 수 있고 전체적인 지연과 장애가 발생할 수는 있다
 
+### 5-9. Exercises
+1. 파티션 없는 users (id, firstName, lastName) 테이블의 에서 (middleName) 컬럼을 추가한 상태에서 저장 시에 스키마는 어떻게 되는가?
+```python
+AnalysisException: A schema mismatch detected when writing to the Delta table (Table ID: 76246dde-b128-43df-8fca-605c2dbef282).
+To enable schema migration using DataFrameWriter or DataStreamWriter, please set:
+'.option("mergeSchema", "true")'.
+For other operations, set the session configuration
+spark.databricks.delta.schema.autoMerge.enabled to "true". See the documentation
+specific to the operation for details.
+```
+2. 1번 저장 오류의 경우 `mergeSchema` 옵션을 주고 저장하면 어떻게 되는가?
+> mergeSchema : 스키마가 추가되지만 기존 컬럼의 가장 마지막에 컬럼이 추가된다
+3. `overwriteSchema` 옵션을 주고 저장하면 어떻게 되는가?
+> overwriteSchema : 덮어쓰기 모드(overwrite)에서만 사용할 수 있으며 기존 데이터가 모두 사라짐에 주의해야 한다
+4. 파티션이 존재하는 상태에서 테이블에 2일차 파티션에만 컬럼이 추가되는 경우?
+> 어차피 델타 테이블의 경우 파티션 단위로 파일이 저장될 뿐, 특정 경로를 읽어내는 경우는 없으며, 스키마 또한 통합되어 관리되기 때문에 overwrite 혹은 merge 둘 중에 하나만 고민하면 된다
+5. 데이터 변경이 존재하는 변경 시에 dataChange = false 주게 되는 경우?
+> 최초 테이블 생성 시에 저장되는 히스토리 정보 확인 후, append 이후에 히스토리 내역을 보면 `islocationLevel` 이 `Serializable` 에서 `SnapshotIsolation` 으로 변경
 
+#### Isolation Level using Delta Lake
+> 결국 아래의 설정을 고려하여 `Where` 절과 `replaceWhere` 등의 구문을 활용하여 적절한 격리수준을 제공하는 것이 성능에 영향을 줄 수 있습니다
+
+| 격리수준 | 동시성 | 일관성 | 성능 |
+| --- | --- | --- | --- |
+| Serializable | 수정 중인 데이터에 대한 접근을 완전히 차단 | 완전한 격리와 일관성을 보장 | 높은 동시성 환경에서 더 나은 성능을 제공 |
+| SnapshotIsolation | 다른 트랜잭션이 읽고 쓸 수 있도록 허용 | 동시 수정으로 인해 불일치가 발생 | 트랜잭션 간의 상호 작용에 더 많은 유연성을 허용 |
 
 
 
