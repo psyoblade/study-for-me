@@ -564,6 +564,269 @@ specific to the operation for details.
 | SnapshotIsolation | 다른 트랜잭션이 읽고 쓸 수 있도록 허용 | 동시 수정으로 인해 불일치가 발생 | 트랜잭션 간의 상호 작용에 더 많은 유연성을 허용 |
 
 
+## 6. 시간 여행
+> 시간이 지남에 따라 데이터가 변경되고 그에 따른 조건이나 다양한 환경에 따라 요구사항이 바뀌는 경우가 많은데 이러한 다양한 상황에서 활용 가능한 '시간여행' 기능에 대해 소개합니다
+* GDPR 과 같은 규제에 따른 데이터의 영구적인 삭제
+* 실험 혹은 리포트를 위한 특정 시점의 데이터 조회
+* 실수 혹은 오류에 의한 과거 시점으로의 데이터 롤백
+* 시계열 분석이나 디버깅을 위한 다양한 정보 조회
+
+### 델타 레이크 리텐션 관련 안전장치
+1. 델타 레이크 엔진의 경우, 로그는 30일, 데이터는 최근 7일 이내의 로그 및 데이터는 삭제는 할 수 없다
+1. 만약 7일 이내의 기간에 대한 로그 및 데이터 삭제를 위해서는 'spark.databricks.delta.retentionDurationCheck.enabled' 설정을 false 로 설정해야 한다
+1. 해당 일자를 초과하는 기간에 대해서는 언제든지 변경이 가능하다
+1. 생성 및 수정을 통한 `TBLPROPERTIES ('delta.logRetentionDuration'='interval 10 minutes')` 변경은 초 단위까지 가능하지만
+1. 명령어 `VACUUM` 실행 시에는 `VACUUM tableName RETAIN 0 HOURS;` 와 같이 시간 단위로만 변경이 가능하다
+
+### 데이터 리텐션의 특징
+1. 기본적으로 데이터 파일은 `VACUUM` 명령이 실행되기 전까지는 어떠한 파일도 삭제되지 않으며, 삭제 대상 후보를 정의하기만 합니다
+1. 최근 7일 이내의 데이터 삭제를 위해서는 `retentionDurationCheck.enabled` 값을 false 설정이 필요합니다
+1. 테이블 DDL 명령을 통해서 `ALTER TABLE <table-naem> SET TBLPROPERTIES('delta.deletedFileRetentionDuration' = 'interval 30 seconds')` 와 같이 설정을 변경할 수 있습니다
+1. 반드시 명시적으로 `VACUUM` 수행을 해야만 데이터 파일의 삭제가 이루어집니다
+
+### 로그 리텐션의 특징
+1. 기본적으로 로그 파일은 명시적으로 삭제하는 명령이 존재하지 않으며, 제약조건에 맞는 로그파일에 대해서 체크포인트 파일이 생성되는 시점에 조건에 맞는 로그 파일들을 자동으로 삭제합니다 (즉, 트랜잭션이 발생하지 않으면 영원히 로그파일은 삭제되지 않습니다)
+1. 델타 테이블의 체크포인트 생성 기본 설정은 커밋 10회에 1번씩 체크포인팅이 되기 때문에 그 와중에 발생한 커밋에 대한 시간 여행이 불가능합니다 (0 ~ 9 까지 생성되고 11회차가 체크포인트와 해당 커밋이 같이 생성)
+1. SQL 수준에서 `checkpont` 명령은 없으며, 별도의 프로그램을 통해 API 호출로만 체크포인트 생성이 가능합니다
+1. 로그의 경우 해당 로그가 생성되는 시점에 `logRetentionDuration` 값에 따라서 로그가 삭제되며, 해당 정보는 `TBLPROPERTIES` 정보를 활용합니다
+1. 로그삭제 기본설정이 30일이므로 변경이 필요한 경우 테이블 생성 혹은 이후에 명시적으로 변경해 주어야만 합니다 (스트리밍 애플리케이션의 경우 로그 파일이 상당히 많아질 수 있으며, 특히 하이브 테이블로 생성된 경우 조회 성능에 영향을 줄 수 있기 때문에 반드시 수정을 검토해야만 합니다)
+1. 2024/10/30 현재 구현상 [MetadataCleanup.scala](https://github.com/delta-io/delta/blob/master/connectors/standalone/src/main/scala/io/delta/standalone/internal/MetadataCleanup.scala#L50) 현재시간을 기준으로 리텐션 시간을 뺀 시간에서 GMT 기준 0시 기준으로 일자로 이전일까지만 삭제 대상으로 지정합니다 (현재 체크포인트가 생성되는 시점에 로그 리텐션이 0시간 이라고 하더라도, 오늘 새벽 0시 이전의 로그만 삭제된다고 볼 수 있습니다)
+1. 정리하면 로그 리텐션은 ***테이블 생성시에 특성에 맞도록 반드시 설계***해야 하고, ***삭제시점을 명시적으로 지정할 수 없***으며, 지속적인 변경이 발생하여 주기적으로 체크포인트가 생성된다는 가정 하에 ***한국시간 기준으로 오전 9시 경에 리텐션 이전의 로그 파일이 자동으로 삭제***됩니다
+
+### 스트리밍 애플리케이션의 적절한 로그와 데이터 관리 정책
+1. 스트리밍 애플리케이션의 경우 로그 생성량에 따라 조정해야 하지만, 1분 이내 여러 트랜잭션이 발생하는 경우 로그 리텐션 조정 검토가 필요함
+1. 특히 델타 레이크 커넥터를 통한 하이브 서비스를 고려한다면, 로그의 수에 따른 성능 저하가 예상되므로 생성 시점에 1일~1시간 이하로 리텐션 적용을 검토할 것
+   - 1시간으로 지정하면 오전 9시 경에 9시 이전 로그가 모두 삭제된다고 보면 되고, 그 이후로 24시간 누적된다
+1. 데이터 리텐션의 경우는 로그 리텐션 보다 길 수 없으므로 동일하게 조정하는 것이 적절합니다
+   - 일반적으로 스트리밍의 경우 팩트성 데이터가 많다보니 삭제에 대한 설정은 사실 큰 의미는 없지만 동일하게 유지하는 것이 관리 차원에서 유리합니다
+1. 외에도 스트리밍 처리는 자동 압축이나, 최적화 및 컴팩션 등의 배치 처리를 별도 스케줄로 운영해야 합니다
+
+### 로그/데이터 리텐션 강제 실행이 가능한가?
+* 데이터는 가능하지만, 로그는 어렵다
+
+
+### 6-1. Delta Lake Time Travel
+* 델타 레이크 테이블은 모든 오퍼레이션에 따른 이력을 저장하고 있으며 이는 `DESCRIBE HISTORY <table-name>` 명령으로 확인이 가능하며 특정 버전 혹은 시점의 데이터 조회 `<table-name> VERSION AS OF <version>` 및 복구 `RESTORE <table-name> TO TIMESTAMP AS OF <version>`가 가능합니다
+
+#### Restoring a Table
+```sql
+--describe the table history
+DESCRIBE HISTORY taxidb.tripData;
+
+--restore table to previous version
+RESTORE TABLE taxidb.tripData TO VERSION AS OF 0;
+
+--restore table to a specific timestamp
+RESTORE TABLE taxidb.tripData TO TIMESTAMP AS OF '2023-01-01 00:00:00';
+
+--restore table to the state it was in an hour ago
+RESTORE TABLE taxidb.tripData
+TO TIMESTAMP AS OF current_timestamp() - INTERVAL '1' HOUR;
+```
+![Versioning](images/fig.6-2-versioning.png)
+```python
+from delta.tables import *
+
+--restore table to a specific timestamp using PySpark
+deltaTable = DeltaTable.forName(spark, "taxidb.tripData")
+deltaTable.restoreToTimestamp("2023-01-01")
+```
+> 트랜잭션 로그를 통해 어느 시점에 어떤 데이터는 읽어도 되는지, 읽으면 안 되는 지를 알 수 있듯이, 리스토어 명령도 유사하게 트랜잭션 로그를 통해 동작합니다
+![Transaction-logs](images/fig.6-3-transaction-log-files.png)
+
+#### Restore 고려 사항
+> 리스토어 작업은 당연하게도 데이터 변경이 발생하는 오퍼레이션(dataChange=True)이기 때문에, 다운 스트림 작업이 존재하는 경우 의도하지 않은 사이드 이펙트가 발생할 수 있습니다. 즉, 데이터를 읽어가고 있는 스트리밍 작업이 있는 경우 업스트림 소스에서 리스토어가 발생하면 기존에 존재하는 데이터가 다시 추가(add, dataChange=True)되기 때문에 중복 혹은 일관성 문제가 발생할 수 있습니다
+
+![restore-operation](images/table.6-1-restore-operation.png)
+
+
+#### Querying on Older Version of a Table
+
+```sql
+--describe the table history
+DESCRIBE HISTORY taxidb.tripData;
+
+--count records where VendorId = 1 using version number
+SELECT COUNT(*) AS count FROM taxidb.tripData VERSION AS OF 2 WHERE VendorId = 1;
+
+--count records where VendorId = 1 using operation timestamp
+SELECT COUNT(*) AS count FROM taxidb.tripData VERSION AS OF ’2023-01-01 00:00:00’ WHERE VendorId = 1;
+
+--count records where VendorId = 1 using operation timestamp and using @ syntax timestamp must be in yyyyMMddHHmmssSSS format
+SELECT COUNT(*) AS count FROM taxidb.YellowTaxi@20230101000000000 WHERE VendorId = 1;
+
+--count records where VendorId = 1 using version number and using @ syntax
+SELECT COUNT(*) AS count FROM taxidb.tripData@v2 WHERE VendorId = 1;
+
+--count number of new passengers from 7 days ago
+SELECT sum(passenger_count) - (
+  SELECT sum(passenger_count)
+) FROM taxidb.tripData TIMESTAMP AS OF date_sub(current_date(), 7)
+FROM taxidb.tripData
+```
+> 위의 마지막 예제인 시계열 분석 쿼리는 가능성을 보여준 것이며, 실제 CDF(Change Data Feed)기법을 통해 보다 효과적인 시계열 분석이 가능합니다
+
+
+### 6-2. Data Retention
+> 델타 테이블의 데이터 파일은 `VACUUM` 명령이 명시적으로 수행되지 않으면 자동으로 삭제되지 않으나, 아카이브 로그는 명시적으로 삭제할 수 없으며 정의된 기준에 의해 자동으로 삭제됩니다. 기본 설정은 30일간의 커밋 로그 이력 정보를 유지합니다
+
+#### File Retention
+```sql
+--describe table history
+DESCRIBE HISTORY taxidb.tripData
+
+--set log retention to 365 days
+ALTER TABLE taxidb.tripData
+  SET TBLPROPERTIES(delta.logRetentionDuration = "interval 365 days");
+
+--set data file retention to 365 days
+ALTER TABLE taxidb.tripData
+  SET TBLPROPERTIES(delta.deletedFileRetentionDuration = "interval 365 days");
+
+--show the table properties to confirm data and log file retention
+SHOW TBLPROPERTIES taxidb.tripData;
+```
+
+#### Data Archiving
+> 정기적으로 아카이빙이 필요한 경우 지속적으로 늘어나지 않도록 명시적으로 `REPLACE` 합니다
+
+```sql
+--archive table by creating or replace
+CREATE OR REPLACE TABLE archive.tripData USING DELTA AS
+SELECT * FROM taxidb.tripData
+```
+
+### 6-3. VACUUM
+> 리텐션 설정은 삭제대상 파일의 임계치를 지정하는 것이며 명시적인 삭제는 `VACUUM` 명령이 수행될 때이다
+![vacuum](images/fig.6-4-vacuum.png)
+
+> 주기적으로 모든 델타 테이블에 대해서 `VACUUM` 명령을 수행하는 것이 추천되며 가능한 자주 실행해줄 수 있다면 해당 작업 시에 수행되는 트랜잭션의 범위가 줄어들어 리소스 사용이나, 격리 및 모니터링 등에 용이합니다
+```sql
+--view the previous vacuum commit(s)
+DESCRIBE HISTORY taxidb.tripData
+
+--dry run to get the list of files to be deleted
+VACUUM taxidb.tripData DRY RUN
+    
+--vacuum files not required by versions older than the default retention period
+VACUUM taxidb.tripData;
+
+--vacuum files in path-based table
+VACUUM './chapter06/YellowTaxisDelta/';
+VACUUM delta.`./chapter06/YellowTaxisDelta/`;
+
+--vacuum files not required by versions more than 100 hours old
+VACUUM delta.`./chapter06/YellowTaxisDelta/` RETAIN 100 HOURS;
+```
+
+#### `VACUUM` 사용시 유의사항
+* 기본 설정 7일 이해의 데이터 리텐션 인터벌은 추천하지 않습니다
+* `retentionDurationCheck.enabled` 의 false 설정은 아주 위험하며, 명확히 알고있는 수준에서만 사용해야 합니다
+* 델타 레이크 테이블 디렉토리 내에는 관리되지 않는 모든 파일은 삭제되므로 유의해야 합니다. 단, `underscore (_)` 로 시작하는 디렉토리는 예외이므로 스트리밍 애플리케이션의 체크포인트 경로는 `_checkpoints` 와 같이 사용하면 안전합니다
+* `VACUUM` 작업은 데이터의 크기에 따라 리소스와 시간이 많이 소요됩니다. 또한 `OPTIMIZE` 와 병행하여 테이블이 항상 최적의 상태를 유지하도록 관리하는 것을 추천합니다
+
+
+### 6-4. Changing Data Feed
+> 시계열 분석을 위해 전체 테이블을 시간여행을 통해 분석할 수도 있지만, 좀 더 우아하게 모든 트랜잭션을 트래킹 할 수 있는 기법이 Change Data Feed(CDF) 입니다. 델타 테이블에서 "change events" 를 활성화 했다면 스트리밍 애플리케이션 등을 통해서 대상 테이블에서 발생하는 모든 트랜잭션을 인지할 수 있고, 지정한 로우의 CRUD 에 대한 인지가 가능합니다
+
+* ETL operations : 대용량의 fact 성 업스트림에서 극히 일부의 데이터만 처리하고 싶을 때
+* Transmit changes for downstream consumers : 스파크 스트리밍, 카프카 컨슈머 등의 다양한 스트림 컨슈머에 준 실시간 분석용 스트리밍 리포트를 생성하고 싶을 떄
+* Audit trail table : 모든 스트리밍 로우에 대한 감사가 필요할 때
+
+#### Enabling the CDF
+> 아래의 명령이 수행된 직후 부터 CDF 가 활성화되며 `_change_data` 경로 아래에 레코드가 저장되는데, `updates` 와 `deletes` 의 변경사항만이 저장되며 `inserts` 정보는 `_delta_log` 의 트랜잭션 로그를 확인하는 것이 더 효과적입니다
+```sql
+-- activate all new tables by setting this Spark configuration property
+set spark.databricks.delta.properties.defaults.enableChangeDataFeed = true
+
+--create new table with change data feed
+CREATE TABLE IF NOT EXISTS taxidb.tripAggregates 
+(VendorId INT, PassengerCount INT, FareAmount INT)
+  TBLPROPERTIES (delta.enableChangeDataFeed = true);
+
+--alter existing table to enable change data feed
+ALTER TABLE myDeltaTable SET TBLPROPERTIES (delta.enableChangeDataFeed = true);
+```
+* `_change_data` 경로의 모든 데이터는 데이터 파일의 리텐션과 동일하게 적용됩니다
+
+#### Viewing the CDF Using SQL
+```sql
+-- view the row-level changes of a table
+SELECT *
+FROM table_changes('taxidb.tripAggregates', 1, 4)
+ORDER BY _commit_timestamp
+
+-- changes over time
+SELECT *
+FROM table_changes('taxidb.tripAggregates', 1, 4)
+WHERE VendorId = 1 AND _change_type = 'update_postimage'
+ORDER BY _commit_timestamp
+
+-- inserts
+SELECT *
+FROM table_changes('taxidb.tripAggregates', '2023-01-01')
+WHERE VendorId = 1 AND _change_type = 'insert'
+ORDER BY _commit_timestamp
+```
+
+#### Using DataFrame APIs
+```python
+# view CDF table changes using versions
+spark.read.format("delta") \
+.option("readChangeFeed", "true") \
+.option("startingVersion", 1) \
+.option("endingVersion", 4) \
+.table("taxidb.tripAggregates")
+
+# view CDF table changes using timestamps
+spark.read.format("delta")\
+.option("readChangeFeed", "true")\
+.option("startingTimestamp", "2023-01-01 00:00:00")\
+.option("endingTimestamp", "2023-01-31 00:00:00")\
+.table("taxidb.tripAggregates")
+```
+
+#### CDF 의 특징 및 유의점
+* 데이터 파일과 마찬가지의 리텐션을 가지므로, 파일 리텐션 정책에 근거해서 사용해야 한다
+* 실제 원본 데이터가 아니라 변경된 데이터의 일부만 저장되어 오버헤드는 상대적으로 아주 작다
+* CDF 활성화되기 이전의 변환에 대해서는 저장되지 않는다
+* 한번 활성화 했다면 Delta Lake 1.2.1 이하의 버전과는 호환되지 않습니다
+
+### 6-5. Conclusion
+> 델타 레이크의 시간여행 기능이 제공하는 가능성을 이해하고 활용 사례를 만들어 볼 수 있습니다
+
+#### 활용 사례
+* Time Travel
+  * 하나의 테이블을 활용하여 과거 특정 시점과 비교 분석 및 조인이 가능합니다
+* Data Retention & VACUUM
+  * 새로운 기능을 제공하기 보다는, 이러한 테이블 운영 관점에서 반드시 검토되어야 할 운영관리 기능
+* Change Data Feed
+  * 실시간 데이터 스트리밍을 통해 기존 스트리밍 애플리케이션을 대체할 수 있는기 검토
+
+
+
+### 6-6. Q&A
+1. 항상 모든 트랜잭션에 대해 시간 여행이 안되는 것 같은데, 체크포인트를 임의로 생성할 수 있나요?
+   * SQL 은 불가능하고, API 통해서만 가능합니다
+2. 문서에서는 로그의 양과 성능에 영향이 없다고 하는데 스트리밍 델타 테이블의 경우 하이브 조회에 성능이 너무 느린데 왜 그런가요?
+   * 스파크의 경우 세션 생성시에 모든 메타를 로딩 후, 메모리에서 관리하기 때문에 메타 관리 이슈가 없으나, 하이브 테이블로 로딩해서 사용 시에는 매 호출시 마다 대상 트랜잭션 로그를 읽을 필요가 있기 때문에 상당히 느려질 수 있습니다
+   * 특히 스트리밍 테이블의 경우 트랜잭션의 수에 따라 트랜잭션 로그의 리텐션을 조정할 필요가 있습니다
+3. GDPR 과 같은 이유로 특정 개인정보를 가진 데이터를 저장소에서 완전히 삭제가 가능한가요?
+  * 특정 데이터를 가진 레코드를 삭제 혹은 특정 컬럼을 삭제할 수 있습니다
+  * 다만, `VACUUM tableName RETAIN 0 HOURS;` 명령은 과거의 데이터에 더 이상 접근이 불가능하게 됩니다
+4. 같은 이유로 레코드 삭제가 아니라 특정 컬럼만 삭제하는 것이 가능한가요?
+  * 컬럼을 드랍하는 방식이 아니라 제거한 데이터프레임을 기존 테이블에 덮어쓰는 방식으로 해야합니다
+  * 이 또한 `VACUUM` 명령을 통해서 과거 파일을 모두 삭제하면, 더 이상 접근이 불가능합니다
+5. `VACUUM` 실행 시에도 `RETAIN 100 HOURS` 적용시에, 원 테이블 설정과 런타임 시의 설정 중에 어떤 것 기준으로 적용이 되는가?
+  * 테이블 설정보다 높은 값이 아닌 경우 오류를 반환하게 됩니다
+  * `spark.databricks.delta.retentionDurationCheck.enabled = false` 설정 시에는 지정이 가능하며 반드시 `RETAIN` 설정 값을 지정해야 하는데, 조회되는 가장 긴 기간 혹은 업데이트 가능성이 있는 시간 보다 긴 시간을 지정해야 데이터 유실을 막을 수 있습니다
+6. 아래와 같이 형식은 동작하지 않는가?
+```sql
+SELECT COUNT(*) AS count FROM taxidb.YellowTaxi@`2023-01-01 00:00:00` WHERE VendorId = 1;
+```
+7. 왜 CDF 형식은 insert 와 Delete, Update 를 달리 저장하는 걸까? _delta_log 에 모든 CRUD 가 다 저장되지 않는가?
+  * 어떤 값이 어디서 어떻게 변화했는지에 대한 정보를 굳이 남기는 것은 부하가 클 뿐만 아니라, 굳이 가지고 있지 않아도 되는 정보이므로 현재 시점의 스냅샷만 저장하는 것이 델타의 기본 동작이라고 할 수 있다
+  * 삭제, 변경 전후 정보를 모두 유지하는 것으로써 완전한 아카이빙 로그로써 동작할 수 있게된다
 
 
 ## 9. Q&A
