@@ -3,7 +3,7 @@
 
 ## 1. Apache Iceberg 구조 이해
 * 계획 : [2025-Q3-Executive-Management](https://www.notion.so/psyoblade/2025-Q3-Executive-Management-223f2b5c7bc480d58de3dc58b5be9463)
-* 기한 : 7/1 (화) ~ 7/7 (월)
+* 기한 : 7/1 (화) ~ 7/14 (월)
 * 목표 : Delta vs Iceberg 구조 비교- Spark–Iceberg integration 이해
 * 과제 : Iceberg 개념 정리 노트 (Presentation)
 
@@ -60,6 +60,19 @@
 
 
 ### 1.3 [Apache Iceberg vs Delta Lake (I): Metadata Management & Indexing (2025)](https://www.chaosgenius.io/blog/iceberg-vs-delta-lake-metadata-indexing/)
+
+#### 1.3.1 개요
+* 데이터 레이크하우스는 '데이터 웨어하우스'의 ACID 트랜잭션 지원과 분석의 빠른 속도와 유연성, '데이터 레이크'의 스키마 진화, 확장성과 대용량 데이터의 처리의 강점을 결합한 데이터 저장 및 처리 엔진입니다
+* 특징 비교
+  * ![아이스버그 vs. 델타레이크](images/Apache-Iceberg-vs-Delta-Lake.png)
+* 아이스버그 카탈로그
+  * 테이블을 어디에 저장할 지를 정의하는 계층을 말하며 `catalog.db.table` 같은 구성을 가진다
+  * `catalog name` : 카탈로그 타입만 명확하면 임의의 이름을 지정해도 좋으나 `iceberg_dev` `iceberg_prod` 와 같은 명시적인 구성을 추천
+  * `namespace` : 카탈로그 내에 포함된 데이터베이스 개념 `account_db` 와 같은 개념
+  * `table identifier` : 카탈로그, 네임스페이스 모두 포함한 `catalog_name.namespace.table_name` 형태의 완전한 이름
+  * `catalog implementation` : HadoopCatalog, HiveCatalog 등의 다양한 구현체가 존재함
+
+
 
 ### 1.4 [Apache Iceberg vs Delta Lake (II): Schema and Partition Evolution (2025)](https://www.chaosgenius.io/blog/iceberg-vs-delta-lake-schema-partition)
 
