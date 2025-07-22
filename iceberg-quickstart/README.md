@@ -65,13 +65,24 @@
 * 데이터 레이크하우스는 '데이터 웨어하우스'의 ACID 트랜잭션 지원과 분석의 빠른 속도와 유연성, '데이터 레이크'의 스키마 진화, 확장성과 대용량 데이터의 처리의 강점을 결합한 데이터 저장 및 처리 엔진입니다
 * 특징 비교
   * ![아이스버그 vs. 델타레이크](images/Apache-Iceberg-vs-Delta-Lake.png)
-* 아이스버그 카탈로그
+1. 아이스버그 카탈로그
   * 테이블을 어디에 저장할 지를 정의하는 계층을 말하며 `catalog.db.table` 같은 구성을 가진다
   * `catalog name` : 카탈로그 타입만 명확하면 임의의 이름을 지정해도 좋으나 `iceberg_dev` `iceberg_prod` 와 같은 명시적인 구성을 추천
   * `namespace` : 카탈로그 내에 포함된 데이터베이스 개념 `account_db` 와 같은 개념
   * `table identifier` : 카탈로그, 네임스페이스 모두 포함한 `catalog_name.namespace.table_name` 형태의 완전한 이름
   * `catalog implementation` : HadoopCatalog, HiveCatalog 등의 다양한 구현체가 존재함
-
+2. 아이스버그 아키텍처
+  * ![아이스버그 아키텍처](images/iceberg-vs-delta-lake-metadata-indexing-4.png)
+  * 아이스버그 카탈로그 : Apache Hive, AWS Glue 등 다양한 카탈로그 유형의 추상화된 레이어를 통해 서로다른 카탈로그 간 접근이 가능합니다
+  * 메타데이터 계층
+    * Metadata files (메타): *테이블, 스키마, 파티셔닝 정보 및 스냅샷에 대한 정보*를 저장합니다. 또한 *테이블의 변경 내역과 현재 상태를 추적*합니다
+    * Manifest lists (참조): 이 목록에는 *매니페스트 파일과 고급 통계 및 파티션 정보에 대한 참조*가 포함되어 있으므로 효율적으로 데이터에 액세스하고 필터링할 수 있습니다
+    * Manifest files (통계): 이 파일은 개별 *데이터 파일과 레코드 수, 열 경계 등의 통계*를 나열합니다. 파일 수준에서 데이터를 추적하고 관리할 수 있습니다.
+  * 데이터 계층 : Parquet, Avro 혹은 ORC 등의 데이터를 가진 파일
+3. 델타레이크 아키텍처
+  * 델타 테이블 (통계/참조)
+  * 델타 로그 (메타): 모든 트랜잭션을 저장하는 로그를 parquet 포맷으로 압축하여 저장하고 체크포인트 정보를 포함합니다
+  * 스토리지 계층 : HDFS, S3, Azure Data Lake 등의 다양한 스토리지 계층을 지원합니다
 
 
 ### 1.4 [Apache Iceberg vs Delta Lake (II): Schema and Partition Evolution (2025)](https://www.chaosgenius.io/blog/iceberg-vs-delta-lake-schema-partition)
@@ -90,6 +101,32 @@
 | **Data Lakehouse** | 2020s   | Lake의 유연성과 Warehouse의 품질 보장(ACID, 쿼리 최적화)을 **동시에 추구** | Delta Lake, Apache Iceberg, Apache Hudi |
 
 #### Q2. 아주 큰 데이터를 가진 테이블의 경우에 일부 데이터를 추가 혹은 백필해야 하는 경우 전체를 적재하기 보다 일부만 Upsert 하는 게 좋을까?
+* 백필 범위를 특정할 수 있고 충분히 크기가 작다면, `MERGE INTO` 방법을 통해 `UPSERT` 가 최적
+```sql
+MERGE INTO delta.`/datalake/fact_log_table` AS target
+USING parquet.`/backup/20250720/fact_log/` AS source
+ON target.log_id = source.log_id AND target.p_dt = source.p_dt
+WHEN MATCHED THEN UPDATE SET *
+WHEN NOT MATCHED THEN INSERT *
+```
+* 백필 데이터 범위 특정이 어렵고, 너무 큰 경우라면 `replaceWhere` 방법을 통해 파티션 전체를 교체
+```scala
+// Delta Lake 테이블 - 백필 대상 파티션만 추출 (예: 2025-07-20)
+spark.read.parquet("/backups/20250720")
+  .write
+  .format("delta")
+  .mode("overwrite")
+  .option("replaceWhere", "p_dt = '20250720'")
+  .save("/datalake/fact_log_table")
+
+// Iceberg 테이블 - df에 p_dt와 server_id 컬럼이 존재
+spark.read.parquet("/backup/20250720")
+  .overwriteDynamicPartitions()
+```
+* 백필 이후에 최적화 과정이 반드시 필요하다
+  * Delta Lake : `OPTIMIZE`, `VACUUM` 및 `ZORDER BY`
+  * Iceberg : `Compact`, `Expire snapshots`, `Remove orphan files`
+
 
 #### Q3. 아이스버그와 델타레이크의 메타관리의 구조적 차이에 따른 장점과 단점은 어떻게 다른가?
 
@@ -112,11 +149,12 @@
 | **델타레이크** | 직관적인 CDF 제공, 단순한 구조 운영 관리 용이, 스트리밍 및 중소규모 데이터 처리 용이 | append only log + replay 기반이라 로그가 늘어날수록 스캔 성능 저하, 병합 지연 (checkpoint) |
 
 
-* 아이스버그 메타 계층 구조 (Snapshot → Manifest List → Manifest → Data File)
+* 아이스버그 메타 계층 구조 - Snapshot(*.json) → Manifest List(list-*.avro) → Manifest(*.avro) → Data File(*.parquet)
 ```text
  metadata/
- ├── v1.metadata.json          ← 테이블 메타데이터
- ├── snap-123.avro             ← snapshot 정보
+ ├── *.metadata.json           ← 테이블 메타데이터
+ ├── snap-*.avro               ← snapshot 정보
+ ├── optimized-*.avro          ← 
  ├── manifest-list-*.avro      ← snapshot에 포함된 manifest 목록
  └── manifest-*.avro           ← 데이터 파일 목록 + 통계
 ```
@@ -137,6 +175,18 @@
   * 체크포인트 주기 조정 없이도 충분한 성능 확보 가능 (log 수 적음)
   * 복잡한 manifest 구조 없이도 읽기/쓰기 빠름
 
+#### Q6. 아이스버그는 델타레이크대비 스키마 에볼루션이 강력하다고 하는데 어떤 경우에 확인할 수 있는가?
+* 아이스버그는 컬럼 id 기반의 스키마 관리로 컬럼의 이름, 순서 변경이 가능하지만 델타는 그렇지 못하다
+* 
+| 기능                            | Delta Lake | Iceberg           | 설명                             |
+| ----------------------------- | ---------- | ----------------- | ------------------------------ |
+| ✅ 컬럼 추가                       | O          | O                 | 둘 다 지원                         |
+| ✅ 컬럼 삭제                       | O (v2 이상)  | O                 | 최근 Delta v2에서 정식 지원 시작         |
+| 🚫 컬럼 이름 변경                   | 제한적        | **O**             | Delta는 일부 조건에서 오류 발생           |
+| 🚫 컬럼 순서 변경                   | 불안정        | **O (논리적 순서 지원)** | Iceberg는 *ID 기반 schema*        |
+| 🚫 중첩 필드 변경 (nested rename 등) | 미지원        | **O**             | Iceberg만 구조적 rename 가능         |
+| 🧩 스키마 ID 기반 추적               | ❌          | ✅                 | Iceberg는 *column ID* 기반 변경 관리  |
+| 🔄 백필 시 충돌 방지                 | 취약         | 강함                | Iceberg는 schema ID로 안전하게 병합 가능 |
 
 
 
