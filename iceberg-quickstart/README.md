@@ -3,8 +3,8 @@
 
 ## 1. Apache Iceberg 구조 이해
 * 계획 : [2025-Q3-Executive-Management](https://www.notion.so/psyoblade/2025-Q3-Executive-Management-223f2b5c7bc480d58de3dc58b5be9463)
-* 기한 : 7/1 (화) ~ 7/14 (월)
-* 목표 : Delta vs Iceberg 구조 비교- Spark–Iceberg integration 이해
+* 기한 : 7/1 (화) ~ 7/31 (목)
+* 목표 : Delta vs Iceberg 구조 비교 - Spark–Iceberg integration 이해
 * 과제 : Iceberg 개념 정리 노트 (Presentation)
 
 ### 1.1 [Apache Iceberg at Wikipedia](https://en.wikipedia.org/wiki/Apache_Iceberg)
@@ -47,47 +47,92 @@
 #### 1.2.4 Apache Iceberg 와 Delta Lake 선택을 위한 체크리스트
 
 * Apache Iceberg: **다양한 쿼리 엔진을 갖춘 클라우드 기반 아키텍처**에 가장 적합
-  * *다양한 쿼리 엔진(Hive, Trino 등)* 지원
-  * *엄청난 양(수 TB 이상)의 데이터 세트*로 작업
-  * 유연한 스키마 진화가 필요
-  * 공급업체에 구애받지 않는 솔루션
-  * 다양한 플랫폼에서 수평적으로 확장할 계획
+   * *다양한 쿼리 엔진(Hive, Trino 등)* 지원
+   * *엄청난 양(수 TB 이상)의 데이터 세트*로 작업
+   * 유연한 스키마 진화가 필요
+   * 공급업체에 구애받지 않는 솔루션
+   * 다양한 플랫폼에서 수평적으로 확장할 계획
 * Delta Lake: **긴밀한 통합이 필요한 Spark 중심 환경**에 가장 적합
-  * 주로 *데이터 처리에 Spark* 엔진을 사용
-  * 더 *간단한 설정과 관리*가 필요합니다
-  * *중소 규모(수 TB 이하) 데이터 세트*를 보유합니다.
-  * *스트리밍 작업에 대한 강력한 지원*이 필요합니다.
+   * 주로 *데이터 처리에 Spark* 엔진을 사용
+   * 더 *간단한 설정과 관리*가 필요합니다
+   * *중소 규모(수 TB 이하) 데이터 세트*를 보유합니다.
+   * *스트리밍 작업에 대한 강력한 지원*이 필요합니다.
 
 
 ### 1.3 [Apache Iceberg vs Delta Lake (I): Metadata Management & Indexing (2025)](https://www.chaosgenius.io/blog/iceberg-vs-delta-lake-metadata-indexing/)
 
 #### 1.3.1 개요
-* 데이터 레이크하우스는 '데이터 웨어하우스'의 ACID 트랜잭션 지원과 분석의 빠른 속도와 유연성, '데이터 레이크'의 스키마 진화, 확장성과 대용량 데이터의 처리의 강점을 결합한 데이터 저장 및 처리 엔진입니다
+> 데이터 레이크하우스는 '데이터 웨어하우스'의 ACID 트랜잭션 지원과 분석의 빠른 속도와 유연성, '데이터 레이크'의 스키마 진화, 확장성과 대용량 데이터의 처리의 강점을 결합한 데이터 저장 및 처리 엔진입니다
 * 특징 비교
   * ![아이스버그 vs. 델타레이크](images/Apache-Iceberg-vs-Delta-Lake.png)
+
 1. 아이스버그 카탈로그
-  * 테이블을 어디에 저장할 지를 정의하는 계층을 말하며 `catalog.db.table` 같은 구성을 가진다
-  * `catalog name` : 카탈로그 타입만 명확하면 임의의 이름을 지정해도 좋으나 `iceberg_dev` `iceberg_prod` 와 같은 명시적인 구성을 추천
-  * `namespace` : 카탈로그 내에 포함된 데이터베이스 개념 `account_db` 와 같은 개념
-  * `table identifier` : 카탈로그, 네임스페이스 모두 포함한 `catalog_name.namespace.table_name` 형태의 완전한 이름
-  * `catalog implementation` : HadoopCatalog, HiveCatalog 등의 다양한 구현체가 존재함
+   * 테이블을 어디에 저장할 지를 정의하는 계층을 말하며 `catalog.db.table` 같은 구성을 가진다
+   * `catalog name` : 카탈로그 타입만 명확하면 임의의 이름을 지정해도 좋으나 `iceberg_dev` `iceberg_prod` 와 같은 명시적인 구성을 추천
+   * `namespace` : 카탈로그 내에 포함된 데이터베이스 개념 `account_db` 와 같은 개념
+   * `table identifier` : 카탈로그, 네임스페이스 모두 포함한 `catalog_name.namespace.table_name` 형태의 완전한 이름
+   * `catalog implementation` : HadoopCatalog, HiveCatalog 등의 다양한 구현체가 존재함
 2. 아이스버그 아키텍처
-  * ![아이스버그 아키텍처](images/iceberg-vs-delta-lake-metadata-indexing-4.png)
-  * 아이스버그 카탈로그 : Apache Hive, AWS Glue 등 다양한 카탈로그 유형의 추상화된 레이어를 통해 서로다른 카탈로그 간 접근이 가능합니다
-  * 메타데이터 계층
-    * Metadata files (메타): *테이블, 스키마, 파티셔닝 정보 및 스냅샷에 대한 정보*를 저장합니다. 또한 *테이블의 변경 내역과 현재 상태를 추적*합니다
-    * Manifest lists (참조): 이 목록에는 *매니페스트 파일과 고급 통계 및 파티션 정보에 대한 참조*가 포함되어 있으므로 효율적으로 데이터에 액세스하고 필터링할 수 있습니다
-    * Manifest files (통계): 이 파일은 개별 *데이터 파일과 레코드 수, 열 경계 등의 통계*를 나열합니다. 파일 수준에서 데이터를 추적하고 관리할 수 있습니다.
-  * 데이터 계층 : Parquet, Avro 혹은 ORC 등의 데이터를 가진 파일
+   * ![아이스버그 아키텍처](images/iceberg-vs-delta-lake-metadata-indexing-4.png)
+   * 아이스버그 카탈로그 : Apache Hive, AWS Glue 등 다양한 카탈로그 유형의 추상화된 레이어를 통해 서로다른 카탈로그 간 접근이 가능합니다
+   * 메타데이터 계층
+      * Metadata files (메타): *테이블, 스키마, 파티셔닝 정보 및 스냅샷에 대한 정보*를 저장합니다. 또한 *테이블의 변경 내역과 현재 상태를 추적*합니다
+      * Manifest lists (참조): 이 목록에는 *매니페스트 파일과 고급 통계 및 파티션 정보에 대한 참조*가 포함되어 있으므로 효율적으로 데이터에 액세스하고 필터링할 수 있습니다
+      * Manifest files (통계): 이 파일은 개별 *데이터 파일과 레코드 수, 열 경계 등의 통계*를 나열합니다. 파일 수준에서 데이터를 추적하고 관리할 수 있습니다.
+   * 데이터 계층 : Parquet, Avro 혹은 ORC 등의 데이터를 가진 파일
 3. 델타레이크 아키텍처
-  * 델타 테이블 (통계/참조)
-  * 델타 로그 (메타): 모든 트랜잭션을 저장하는 로그를 parquet 포맷으로 압축하여 저장하고 체크포인트 정보를 포함합니다
-  * 스토리지 계층 : HDFS, S3, Azure Data Lake 등의 다양한 스토리지 계층을 지원합니다
+   * 델타 테이블 (통계/참조)
+   * 델타 로그 (메타): 모든 트랜잭션을 저장하는 로그를 parquet 포맷으로 압축하여 저장하고 체크포인트 정보를 포함합니다
+   * 스토리지 계층 : HDFS, S3, Azure Data Lake 등의 다양한 스토리지 계층을 지원합니다
 
 
 ### 1.4 [Apache Iceberg vs Delta Lake (II): Schema and Partition Evolution (2025)](https://www.chaosgenius.io/blog/iceberg-vs-delta-lake-schema-partition)
+> 본 내용은 반복되는 부분이 많아서 패스
 
 ### 1.5 [Apache Iceberg Introduction](https://iceberg.apache.org/docs/1.9.1/)
+> 일부 실무에 관련된 파트만 발췌해서 이해하기 - Tables, Hive, Spark 까지만 학습하고 종료
+
+#### 1.5.1 [Tables - Branching and Tagging](https://iceberg.apache.org/docs/1.9.1/branching/)
+> 아이스버그 테이블은 테이블의 상태를 스냅샷이라는 형태로 유지하고, 이를 브랜치와 태그로 관리합니다
+1. 태그는 주/월/년 수준의 특정 시점의 스냅샷을 보관하는 용도로 사용될 수 있습니다
+    ```sql
+    -- Create a tag for the first end of month snapshot. Retain the snapshot for 6 months
+    -- ex_ 542933980239 is example of current snapshot-id
+    ALTER TABLE prod.db.table CREATE TAG `EOM-01` AS OF VERSION 542933980239 RETAIN 180 DAYS;
+    ```
+2. 브랜치는 임의의 시점에 브랜치를 하나 생성하고 생성된 브랜치만 데이터를 저장해보고 검수를 거친 이후에 메인 브랜치에 반영하는 용도로 활용
+    ```sql
+    -- Write Audit Publish 설정을 키고
+    ALTER TABLE db.table SET TBLPROPERTIES ( 'write.wap.enabled'='true' );
+    -- 임의의 스냅샷 3 에서 브랜치 `audit-branch` 생성하고
+    ALTER TABLE db.table CREATE BRANCH `audit-branch` AS OF VERSION 3 RETAIN 7 DAYS;
+    -- 지정한 브랜치에 업데이트를 수행하고
+    SET spark.wap.branch = audit-branch
+    INSERT INTO prod.db.table VALUES (3, 'c');
+    -- 감사가 끝났다면 메인 브랜치에 반영하면 된다
+    CALL catalog_name.system.fast_forward('prod.db.table', 'main', 'audit-branch');
+    ```
+3. 이러한 브랜치와 태그를 활용한 조회가 가능합니다
+    ```sql
+    SELECT * FROM db.table.refs;
+    test_branch BRANCH  8109744798576441359 NULL    NULL    NULL
+    main        BRANCH  6910357365743665710 NULL    NULL    NULL
+
+    SELECT * FROM db.table VERSION AS OF 8109744798576441359;
+    1   a   1.0
+    2   b   2.0
+    3   c   3.0
+    ```
+
+#### 1.5.2 [Tables - Configuration](https://iceberg.apache.org/docs/1.9.1/configuration/)
+
+#### 1.5.3 [Tables - Maintenance](https://iceberg.apache.org/docs/1.9.1/maintenance/)
+
+#### 1.5.4 [Tables - Partitioning](https://iceberg.apache.org/docs/1.9.1/partitioning/)
+
+#### 1.5.5 [Tables - Schemas](https://iceberg.apache.org/docs/1.9.1/schemas/)
+
+
 
 ### 1.6 Q&A
 
