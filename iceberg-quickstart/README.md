@@ -93,7 +93,8 @@
 > 일부 실무에 관련된 파트만 발췌해서 이해하기 - Tables, Hive, Spark 까지만 학습하고 종료
 
 #### 1.5.1 [Tables - Branching and Tagging](https://iceberg.apache.org/docs/1.9.1/branching/)
-> 아이스버그 테이블은 테이블의 상태를 스냅샷이라는 형태로 유지하고, 이를 브랜치와 태그로 관리합니다
+> 아이스버그 테이블은 테이블의 상태를 스냅샷이라는 형태로 유지하고, 이를 브랜치와 태그로 관리합니다. 태그의 기능은 델타레이크의 타임트래블과 유사하지만 브랜치 기능은 아이스버그에만 있는 기능입니다
+
 1. 태그는 주/월/년 수준의 특정 시점의 스냅샷을 보관하는 용도로 사용될 수 있습니다
     ```sql
     -- Create a tag for the first end of month snapshot. Retain the snapshot for 6 months
@@ -125,6 +126,86 @@
     ```
 
 #### 1.5.2 [Tables - Configuration](https://iceberg.apache.org/docs/1.9.1/configuration/)
+> 항목이 너무 많아서, GPT 통해서 대용량 데이터 쓰기 읽기에 도움될 만한 설정에 대해서만 정리하기로 함
+
+1. Read properties
+> 수십 GB ~ 수백 GB 수준의 일반적인 데이터 테이블이라면 기본값 설정으로 충분하지만, 대용량 테이블(수백 GB ~ TB 이상)이거나, Hive/Trino 등 다양한 엔진이 읽는 경우에는 병목이 발생할 수 있습니다
+>
+| 설정                                | 기본값   | 대용량 시                                            |
+| --------------------------------- | ----- | ------------------------------------------------ |
+| `read.split.target-size`          | 128MB | **256MB\~512MB로 증가 권장** → Hive/Trino 쿼리 병렬성 향상   |
+| `read.split.metadata-target-size` | 32MB  | **64MB 이상으로 증가 권장** → manifest group 병렬 구성 효율 향상 |
+
+
+2. Write properties
+> Streaming write는 기본적으로 none이 사용되므로, 데이터가 특정 파티션에 몰릴 가능성 있음 (hot partition)
+>
+| 설정                                     | 기본값                        | 대용량 시                                                |
+|----------------------------------------| -------------------------- | ---------------------------------------------------- |
+| `write.target-file-size-bytes`         | 512MB                      | **1GB 이상으로 확장 권장** → 파일 수 줄이기                 |
+| * `write.distribution-mode`           | `none` | hash: 균등 분산, compaction 유리, range: 정렬이 필요한 대형 배치에 적합, **스트리밍은 과도한 셔플** 발생 |
+| `write.parquet.compression-codec`      | `zstd` | ✅ 유지, 다만 **`compression-level` 설정 권장 (`3~6`)** |
+| `read.parquet.vectorization.enabled`   | `true` | ✅ 반드시 유지 (Hive도 효과 있음)                         |
+| `commit.manifest.target-size-bytes`    | 8MB | **32MB\~64MB로 증가 권장**                |
+| `write.metadata.previous-versions-max` | 100 | 대량 적재/append 빈번 시 **30\~50으로 조정** 권장 |
+| `history.expire.max-snapshot-age-ms`   | 5일  | snapshot 과도 누적 시 **1\~2일로 단축** 고려    |
+
+3. 하이브에서 유의할 사항
+
+| 문제 상황            | 설명                                          |
+| ---------------- | ------------------------------------------- |
+| ❗ 작은 파일 수천 개     | Hive read가 HDFS metadata에 질식 → scan 느림      |
+| ❗ 파티션 불균형        | `distribution-mode=none`이면 일부 파티션에 파일이 몰림   |
+| ❗ 너무 많은 manifest | split planning 시 Hive query가 timeout/OOM 유발 |
+| ❗ snapshot 정리 미흡 | metadata size 수백 GB 증가 → Hive planner 과부하   |
+
+4. 아이스버그 테이블 최초에 먼저 생성하여 기본 설정을 적용한 이후에 적재를 시작하는 것이 좋다
+> 하둡에 먼저 적재하는 경우 해당 시점의 스냅샷이나, 기타 설정을 기본 값으로 물고 가기 때문에 제어가 힘들어지므로 테이블을 명시적으로 생성하고 운영하는 것을 추천
+
+```sparksql
+-- 아래와 같이 아이스버그가 활성화된 Spark SQL 상에서 테이블을 먼저 생성한다
+CREATE TABLE IF NOT EXISTS external_iceberg.namespace.tablename (
+    `id` bigint,
+    `log_time` string,
+    `user_id` int,
+    `user_name` string,
+    `p_dt` string
+)
+USING iceberg
+PARTITIONED BY (p_dt)
+TBLPROPERTIES (
+  'format-version' = '2',
+  'write.format.default' = 'parquet',
+  'commit.manifest-merge.enabled' = 'true',              -- 커밋 시점에 Manifest 파일들을 자동으로 병합 (default = true)
+  'write.metadata.delete-after-commit.enabled' = 'true', -- 커밋 이후 오래된 metadata.json 파일을 자동으로 삭제 (default = false)
+  'write.metadata.previous-versions-max' = '5',          -- delete-after-commit 옵션이 true 일 때, 유지할 메타데이터 버전 수의 최대치
+  'history.expire.max-snapshot-age-ms' = '86400000',     -- 스냅샷 보존 최대 기간 (default = 5days)
+  'write.target-file-size-bytes' = '268435456',          -- 파일 1개당 최대 크기 128MB(하루 최대 128MB), 256MB(하루 최대 1G~10G), 512MB(하루 10G 이상) (default = 512MB)
+  'read.split.target-size' = '134217728',                -- 쿼리 실행 시 데이터 파일을 분할할 대상 크기 128MB~256MB (default = 128MB)
+  'read.split.metadata-target-size' = '33554432'         -- 쿼리 시 metadata split 분할 단위 32MB~64MB (default = 32MB)
+);
+
+-- 기 생성된 테이블인 경우에도 변경하여 해당 시점 이후부터 적용이 가능하다
+ALTER TABLE external_iceberg.namespace.tablename SET TBLPROPERTIES (
+  'write.target-file-size-bytes' = '268435456',
+  'write.metadata.delete-after-commit.enabled' = 'true'
+);
+```
+
+5. 하이브 테이블 연동은 스토리지 핸들러로 읽기전용 테이블로만 사용하는 것이 안전하다
+> 스파크는 쓰기 전용, 하이브는 읽기 전용으로 역할을 구분하는 것이 유용하다
+
+```hiveql
+-- 하이브의 읽기 설정에 유용한 속성만 지정하면되고, 해당 설정은 아이스버그 테이블 자체의 메타데이터에는 영향을 미치지 않는다 
+CREATE EXTERNAL TABLE gfis.lm_gamelog_iceberg
+STORED BY 'org.apache.iceberg.mr.hive.HiveIcebergStorageHandler'
+LOCATION 'hdfs://hdfs-ns/user/psyoblade/warehouse/namespace/tablename'
+TBLPROPERTIES (
+    'iceberg.catalog' = 'external_iceberg'
+);
+```
+
+
 
 #### 1.5.3 [Tables - Maintenance](https://iceberg.apache.org/docs/1.9.1/maintenance/)
 
@@ -232,6 +313,17 @@ spark.read.parquet("/backup/20250720")
 | 🚫 중첩 필드 변경 (nested rename 등) | 미지원        | **O**             | Iceberg만 구조적 rename 가능         |
 | 🧩 스키마 ID 기반 추적               | ❌          | ✅                 | Iceberg는 *column ID* 기반 변경 관리  |
 | 🔄 백필 시 충돌 방지                 | 취약         | 강함                | Iceberg는 schema ID로 안전하게 병합 가능 |
+
+#### Q7. 오랜 기간 최적화 작업을 수행하지 않고 적재만 한 스트리밍 테이블의 경우 최적화 작업에 계속 실패하는데 어떻게 하나?
+
+1. 아래의 순서대로 수행하는 것을 추천
+
+| 단계  | 설명                                                    | 예시                                        |
+| --- |-------------------------------------------------------| ----------------------------------------- |
+| 1️⃣ | 과거 파티션에 대해 `rewrite_data_files` 수행 하여 파티션의 작은 파일을 최적화 | `p_dt BETWEEN '20250715' AND '20250729'`  |
+| 2️⃣ | `expire_snapshots`로 20250714 이전 snapshot 정리           | `WHERE snapshot_timestamp < '2025-07-15'` |
+| 3️⃣ | `remove_orphan_files` 실행                              | 이전 snapshot이 참조하던 파일 제거                   |
+| 4️⃣ | `rewrite_manifests`로 manifest 병합                      | split planning 성능 향상                      |
 
 
 
