@@ -215,7 +215,143 @@ TBLPROPERTIES (
 
 
 
-### 1.6 Q&A
+### 1.6 [Spark](https://iceberg.apache.org/docs/latest/spark-getting-started/)
+
+
+### 1.7 [Hive](https://iceberg.apache.org/docs/latest/hive/)
+
+#### 1.7.1 개요
+* 하이브 4.0에는 아이스버그 1.4.3이 포함되어 있으며, Iceberg 1.8.0부터 Hive 런타임 커넥터가 출시되지 않습니다. Hive 쿼리 엔진 통합(특히 Hive 2.x 및 3.x)을 위해서는 Iceberg 1.6.1에 포함된 Hive 런타임 커넥터를 사용하거나, Iceberg 통합 기능이 내장된 Hive 4.0.0 이상을 사용하세요.
+
+#### 1.7.2 카탈로그 관리
+
+1. 글로벌 하이브 카탈로그
+   * 하이브 관점에서는 메타스토어라는 글로벌 카탈로그 하나만 존재
+   * 아이스버그 관점에서는 다양한 카탈로그(하둡, 하이브, AWS Glue 등)가 존재하며, **경로 기반으로 인식하므로 크로스 카탈로그 접근이 가능**하다
+2. 하이브 테이블 `iceberg.catalog` 속성에 의한 구별 3가지
+   1. 하이브 환경이 활성화되어 `HiveCatalog` 환경에서 운영되면 `iceberg.catalog` 설정 없이도 연동
+   2. 커스텀 카탈로그 설정을 통해 활성화 되는 경우 다양한 카탈로그 접근 연동
+   3. 하이브 경로 지정을 명시적으로 하여 `location_based_table` 하이브 외부 테이블과 유사한 연동
+3. 하이브, 하둡 카탈로그 설정
+   ```sql
+   -- 하이브
+    SET iceberg.catalog.another_hive.type=hive;
+    SET iceberg.catalog.another_hive.uri=thrift://example.com:9083;
+    SET iceberg.catalog.another_hive.clients=10;
+    SET iceberg.catalog.another_hive.warehouse=hdfs://example.com:8020/warehouse;
+   -- 하둡
+    SET iceberg.catalog.hadoop.type=hadoop;
+    SET iceberg.catalog.hadoop.warehouse=hdfs://example.com:8020/warehouse;
+   -- AWS Glue
+    SET iceberg.catalog.glue.type=glue;
+    SET iceberg.catalog.glue.warehouse=s3://my-bucket/my/key/prefix;
+    SET iceberg.catalog.glue.lock.table=myGlueLockTable;
+    ```
+
+#### 1.7.3 DDL 명령 (CREATE)
+
+1. 기본 하이브 명령어
+    ```hiveql
+    -- Iceberg, ORC
+    CREATE TABLE x (i int) STORED BY ICEBERG;
+    CREATE TABLE x (i int) STORED BY ICEBERG STORED AS ORC;
+
+    -- External
+    CREATE EXTERNAL TABLE x (i int) STORED BY ICEBERG;
+
+    -- Partitioned, `SPEC` only for Hive 4.x - {years(ts), months(ts), days(ts), hours(ts), bucket(N, col)
+    CREATE TABLE x (i int) PARTITIONED BY (j int) STORED BY ICEBERG;
+    CREATE TABLE x (i int, ts timestamp) PARTITIONED BY SPEC (month(ts), bucket(2, i)) STORED BY ICEBERG;
+
+    -- Create Table As SELECT
+    CREATE TABLE target PARTITIONED BY SPEC (year(year_field), identity_field) STORED BY ICEBERG AS
+    SELECT * FROM source;
+
+    -- Create Table LIKE : 스키마, TBLPROPERTIES 및 파티셔닝 정보만 복사
+    CREATE TABLE target LIKE source STORED BY ICEBERG;
+    ```
+
+2. 커스텀 카탈로그 테이블 (Custom Catalog Table)
+    ```hiveql
+    -- 하둡의 임의의 경로에 메타데이터 디렉토리를 지정하고 통합된 메타관리를 제공하고, 다양한 플랫폼(Trino, Spar, Hive 등)과 공유할 수 있는 특징이 있습니다
+    -- `EXTERNAL` 키워드를 생략할 수도 있지만 예기치 않은 삭제를 피하기 위해서는 추천되지 않는 방법이다
+    SET iceberg.catalog.hadoop_cat.type=hadoop;
+    SET iceberg.catalog.hadoop_cat.warehouse=hdfs://example.com:8020/hadoop_cat;
+    CREATE EXTERNAL TABLE database_a.table_a
+        STORED BY 'org.apache.iceberg.mr.hive.HiveIcebergStorageHandler'
+        TBLPROPERTIES ('iceberg.catalog'='hadoop_cat');
+    ```    
+
+3. 경로 기반 테이블 (Path based Table)
+    ```hiveql
+    -- 별도의 카탈로그 설정이 필요없으며, 경로에 모든 메타데이터를 저장하는 독립적인 테이블이며, 타 플랫폼(Trino, Hive)와 공유가 불가능하며, 명시적으로 경로를 지정하여 접근해야 한다
+    -- 반드시 catalog 설정이 `location_based_table` 로 지정되어야 한다
+    CREATE
+        EXTERNAL TABLE table_a
+        STORED BY 'org.apache.iceberg.mr.hive.HiveIcebergStorageHandler'
+        LOCATION 'hdfs://some_bucket/some_path/table_a'
+        TBLPROPERTIES ('iceberg.catalog'='location_based_table');
+     ```    
+
+#### 1.7.4 DDL 명령 (ALTER)
+> `HiveCatalog` 에서만 지원하며 자세한 스펙은 [ALTER TABLE](https://iceberg.apache.org/docs/latest/hive/#alter-table) 참고
+* 파티션 스펙을 변경할 수 있는 `Partition Evolution`, 다양한 포맷(Avro, Parquet, ORC 등)으로 변환을 제공하는 `Table migration` 그리고 다양한 필터 조건으로 파티션을 제거할 수 있는 `Partition drop` 등의 기능을 제공한다
+
+
+#### 1.7.5 DDL 명령 (TRUNCATE, DROP, LOCATION 등)
+```hiveql
+TRUNCATE TABLE orders PARTITION (customer_id = 1, first_name = 'John');
+DROP TABLE [IF EXISTS] table_name [PURGE];
+ALTER TABLE t set TBLPROPERTIES ('metadata_location'='<path>/hivemetadata/00003-a1ada2b8-fc86-4b5b-8c91-400b6b46d0f2.metadata.json');
+```
+
+
+#### 1.7.6 DML 명령 (SELECT)
+> 기본적으로 아이스버그의 경우 별도의 메타를 위한 파일시스템 혹은 파티션 조회를 위한 메타스토어 접근이 없기 때문에, (색인이 구성된 파일 블록 사용) 조회 성능에 유리하며, `Predicate pushdown`, `Column projection` 및 `Hive Tez support` 효과를 누릴 수 있다
+
+
+#### 1.7.7 DML 명령 (INSERT, DELETE, UPDATE, MERGE)
+> 기본적인 명령어는 다 지원하므로 자세한 스펙은 [INSERT INTO](https://iceberg.apache.org/docs/latest/hive/#insert-into)참고
+> 특히 [MERGE INTO](https://iceberg.apache.org/docs/latest/hive/#insert-into) 명령을 통해서 조인 연산 이후에 조건에 따라 명령어를 수행할 수도 있다
+```hiveql
+MERGE INTO target AS t        -- a target table
+USING source s                -- the source updates
+ON t.id = s.id                -- condition to find updates for target rows
+WHEN MATCHED AND s.op = 'delete' THEN DELETE
+WHEN MATCHED AND t.count IS NULL AND s.op = 'increment' THEN UPDATE SET t.count = 0
+WHEN MATCHED AND s.op = 'increment' THEN UPDATE SET t.count = t.count + 1
+```
+
+#### 1.7.8 DML 명령 (METADATA)
+> 다양한 메타데이터 조회는 [QUERYING METADATA](https://iceberg.apache.org/docs/latest/hive/#querying-metadata-tables) 참고
+```hiveql
+-- 아래와 같이 테이블의 파일 목록 및 스냅샷 목록을 가져올 수 있다
+SELECT * FROM default.table_a.files;
+SELECT * FROM default.table_a.snapshots;
+```
+
+#### 1.7.9 시간 여행 (TIME TRAVEL)
+> 아이스버그가 유지하는 스냅샷이 존재한다면 아래와 같이 해당 시점의 테이블에 대해 조회가 가능하다. 하지만 해당 스냅샷도 무한히 유지하기 어려우며 대용량 테이블의 경우 그러한 메타 정보도 크기가 무시할 수 없기 때문에 현실적으로 크기가 충분히 작은 관리 테이블 혹은 코드 테이블 등의 이력 관리에 사용하기 적절한 기능으로 생각합니다
+```hiveql
+SELECT * FROM table_a FOR SYSTEM_TIME AS OF '2021-08-09 10:35:57';
+SELECT * FROM table_a FOR SYSTEM_VERSION AS OF 1234567;
+```
+
+#### 1.7.10 테이블 롤백 및 압축 (Rollback, Compaction)
+```hiveql
+-- 특정 시점 혹은 스냅샷 버전으로 롤백
+ALTER TABLE ice_t EXECUTE ROLLBACK('2022-05-12 00:00:00')
+ALTER TABLE ice_t EXECUTE ROLLBACK(1111);
+
+-- Using the ALTER TABLE ... COMPACT syntax
+ALTER TABLE t COMPACT 'major';
+
+-- Using the OPTIMIZE TABLE ... REWRITE DATA syntax
+OPTIMIZE TABLE t REWRITE DATA;
+```
+
+
+### 1.8 Q&A
 
 #### Q1. Data 라는 단어와 다양한 조합으로 다양한 용어가 활용되는데 그 흐름과 어떤 차이점이 있는가?
 
